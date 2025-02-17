@@ -7,6 +7,8 @@ from enum import Enum
 from transformers import T5ForConditionalGeneration, T5Tokenizer, RobertaForSequenceClassification, RobertaTokenizer
 import torch
 import pandas as pd
+from werkzeug.utils import secure_filename
+
 
 class ModelLoadStatus(Enum):
     SUCCESS = 1
@@ -23,6 +25,7 @@ def create_model_pkl(model_name=""):
         model_files = [f for f in os.listdir("models") if pattern.match(f)]
         next_number = max([int(pattern.match(f).group(1)) for f in model_files], default=-1) + 1
         model_name = f"model-{next_number}.pkl"
+    model_name = secure_filename(model_name)
     model_path = os.path.join("models", model_name)
     if not os.path.exists(model_path):
         dummy_data = {"message": "This is a dummy pickle file."}
