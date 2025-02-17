@@ -121,7 +121,7 @@ def preprocess_files():
         selected_files = data.get('files', [])
 
         if not selected_files:
-            return jsonify({'status': 'error', 'message': 'No files selected'})
+            return jsonify({'status': 'error', 'message': 'No files selected'}), 400
 
         for file in selected_files:
             cleaned = get_clean_dataframe(file, f"uploads/{file}")
@@ -130,10 +130,11 @@ def preprocess_files():
             filename = os.path.join(app.config['UPLOAD_FOLDER'], f"{fname}.csv")
             cleaned.to_csv(filename, index=False)
 
-        return jsonify({'status': 'success', 'message': 'Files are being preprocessed', 'files': selected_files})
+        return jsonify({'status': 'success', 'message': 'Files are being preprocessed', 'files': selected_files}), 200
 
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)})
+        app.logger.error(f"Error processing files: {str(e)}")
+        return jsonify({"status": "error", "message": "An internal error has occurred"}), 500
 
 @app.route('/delete', methods=['POST'])
 def delete_file():
