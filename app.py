@@ -137,16 +137,12 @@ def preprocess_files():
 
 @app.route('/delete', methods=['POST'])
 def delete_file():
-    file_name = request.form.get('file')
+    file_name = secure_filename(request.form.get('file'))
 
     if not file_name:
         return jsonify({"status": "error", "message": "No file name provided"}), 400
 
-    upload_folder = app.config.get('UPLOAD_FOLDER')
-    if not upload_folder:
-        return jsonify({"status": "error", "message": "Upload folder not set"}), 500
-
-    file_path = os.path.join(upload_folder, file_name)
+    file_path = os.path.join(app.config.get('UPLOAD_FOLDER'), file_name)
 
     if os.path.exists(file_path):
         try:
@@ -162,20 +158,16 @@ def delete_file():
 def delete_files():
     data = request.get_json()
     file_names = data.get('files')
-    print(file_names)
 
     if not file_names:
         return jsonify({"status": "error", "message": "No files provided"}), 400
-
-    upload_folder = app.config.get('UPLOAD_FOLDER')
-    if not upload_folder:
-        return jsonify({"status": "error", "message": "Upload folder not set"}), 500
 
     failed_files = []
     success_files = []
 
     for file_name in file_names:
-        file_path = os.path.join(upload_folder, file_name)
+        file_name = secure_filename(file_name)
+        file_path = os.path.join(app.config.get('UPLOAD_FOLDER'), file_name)
 
         if os.path.exists(file_path):
             try:
