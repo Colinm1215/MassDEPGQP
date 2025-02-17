@@ -1,0 +1,2 @@
+celery -A worker.celery worker -l info -P gevent
+cd <redis-server-directory> | redis-server.exe

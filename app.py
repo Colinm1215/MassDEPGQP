@@ -1,25 +1,19 @@
 import os
-import threading
-import time
 from datetime import datetime
-
 from flask import Flask, request, jsonify, render_template, Response
-
-from model import PDFStandardizer, create_model_pkl
+from flask_uploads import UploadSet, configure_uploads, UploadNotAllowed
+from model import create_model_pkl
 from pdfScript import get_clean_dataframe
-
+from worker import celery_train_model, celery_process_files
+import gevent
 app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
-MODEL_FOLDER = 'models'
-ALLOWED_EXTENSIONS = {'pdf', 'csv'}
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MODEL_FOLDER'] = MODEL_FOLDER
-modelClass = PDFStandardizer()
-
+app.config.from_object('Config.Config')
+files_upload = UploadSet('files', app.config['ALLOWED_EXTENSIONS'])
+app.config['UPLOADED_FILES_DEST'] = app.config['UPLOAD_FOLDER']
+configure_uploads(app, files_upload)
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 
 def get_file_last_modified(file_path):
@@ -27,11 +21,45 @@ def get_file_last_modified(file_path):
     last_modified_time = datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M:%S')
     return last_modified_time
 
+@app.route('/upload', methods=['POST'])
+def upload_files():
+    if 'files' not in request.files:
+        return jsonify({'error': 'No files part'}), 400
+
+    files = request.files.getlist('files')
+    responses = []
+
+    for file in files:
+        if file.filename == '':
+            responses.append({
+                'filename': file.filename,
+                'status': 'error',
+                'message': 'No selected file'
+            })
+        else:
+            try:
+                files_upload.save(file)
+                responses.append({
+                    'filename': file.filename,
+                    'status': 'success',
+                    'message': f'"{file.filename}" uploaded successfully.'})
+            except UploadNotAllowed:
+                responses.append({
+                    'filename': file.filename,
+                    'status': 'error',
+                    'message': f'"{file.filename}" Invalid file type'
+                })
+            except Exception as e:
+                responses.append({
+                    'filename': file.filename,
+                    'status': 'error',
+                    'message': f'"{file.filename}" {str(e)}'})
+
+    return jsonify(responses)
 
 @app.route('/')
 def index():
     return render_template('upload.html')
-
 
 @app.route('/storage', methods=['GET'])
 def storage():
@@ -75,16 +103,16 @@ def preprocess_files():
             return jsonify({'status': 'error', 'message': 'No files selected'})
 
         for file in selected_files:
-            cleaned = get_clean_dataframe(f"uploads/{file}")
+            cleaned = get_clean_dataframe(file, f"uploads/{file}")
             print(f"Processing file: {file}")
-            filename = os.path.join(app.config['UPLOAD_FOLDER'], f"{file.split(".")[0]}.csv")
+            fname = file.split(".")[0]
+            filename = os.path.join(app.config['UPLOAD_FOLDER'], f"{fname}.csv")
             cleaned.to_csv(filename, index=False)
 
         return jsonify({'status': 'success', 'message': 'Files are being preprocessed', 'files': selected_files})
 
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
-
 
 @app.route('/delete', methods=['POST'])
 def delete_file():
@@ -148,73 +176,18 @@ def delete_files():
 
     return jsonify(result)
 
-
-@app.route('/upload', methods=['POST'])
-def upload_files():
-    if 'files' not in request.files:
-        return jsonify({'error': 'No files part'}), 400
-
-    files = request.files.getlist('files')
-    responses = []
-
-    for file in files:
-        if file.filename == '':
-            response = {'filename': file.filename, 'status': 'error', 'message': 'No selected file'}
-        elif allowed_file(file.filename):
-            try:
-                filename = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-                file.save(filename)
-                response = {'filename': file.filename, 'status': 'success',
-                            'message': f'"{file.filename}" uploaded successfully.'}
-            except Exception as e:
-                response = {'filename': file.filename, 'status': 'error', 'message': f'"{file.filename}" {str(e)}'}
-        elif not allowed_file(file.filename):
-            response = {'filename': file.filename, 'status': 'error', 'message': f'"{file.filename}" Invalid file type'}
-        else:
-            response = {'filename': file.filename, 'status': 'error', 'message': f'"{file.filename}" Unknown Error'}
-        print(response)
-        responses.append(response)
-
-    return jsonify(responses)
-
-
-training_updates = []
-process_updates = []
-
-
-def update_training_status(message):
-    training_updates.append(message)
-
-
-def update_process_status(message):
-    process_updates.append(message)
-
-
-def generate_training_output():
-    global training_updates
-    while True:
-        if training_updates:
-            yield f"data: {training_updates.pop(0)}\n\n"
-        time.sleep(1)
-
-
-def generate_process_output():
-    global process_updates
-    while True:
-        if process_updates:
-            yield f"data: {process_updates.pop(0)}\n\n"
-        time.sleep(1)
-
-
 @app.route('/create_model', methods=['POST'])
 def create_model():
     data = request.get_json()
     model_name = data.get('model_name')
+    r = os.path.join(app.config['MODEL_FOLDER'], model_name)
 
     if not model_name:
         return jsonify({"error": "No model name provided"}), 400
     if not model_name.endswith(".pkl"):
         return jsonify({"error": "Invalid model type (file is not .pkl)"}), 400
+    if os.path.exists(r):
+        return jsonify({"error": f"Model {model_name} already exists"}), 400
     print(f"Model type: {type(model_name)}")
     r = create_model_pkl(model_name)
     if os.path.exists(r):
@@ -228,6 +201,7 @@ def train_model():
     data = request.get_json()
     file_names = data.get('files')
     model_name = data.get('model_name')
+    bypass_already_trained = data.get('bypass_already_trained')
     model_path = os.path.join("models", model_name)
 
     if not file_names:
@@ -239,15 +213,30 @@ def train_model():
     if not os.path.exists(model_path):
         return jsonify({"error": "Model could not be validated"}), 400
 
-    threading.Thread(target=modelClass.train, args=(file_names, model_name, update_training_status)).start()
+    #threading.Thread(target=modelClass.train, args=(pdf_dfs, model_name, update_training_status, bypass_already_trained)).start()
+    task = celery_train_model.delay(file_names, model_name, bypass_already_trained)
+    return jsonify({"message": f"Model training started for {model_name}", "task_id": task.id}), 200
 
-    return jsonify({"message": f"Model training started for {model_name}"}), 200
+@app.route('/train_model_updates/<task_id>')
+def train_model_updates(task_id):
+    from worker import celery
+    def event_stream():
+        asyncres = celery.AsyncResult(task_id)
 
+        while not asyncres.ready():
+            if asyncres._cache:
+                meta = asyncres._cache.get('meta', {})
+                status_msg = meta.get('status', None)
+                print(f"Flask Server Received Update: {status_msg}")  # Debugging log
+                if status_msg:
+                    yield f"data: {status_msg}\n\n"
+            gevent.sleep(.1)  # Small delay to avoid busy-waiting
 
-@app.route('/train_model_updates', methods=['GET'])
-def train_model_updates():
-    return Response(generate_training_output(), mimetype='text/event-stream')
+        result = asyncres.result or {}
+        yield f"data: {result}\n\n"
 
+    return Response(event_stream(), mimetype='text/event-stream',
+                    headers={'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache'})
 
 @app.route('/process_files', methods=['POST'])
 def process_files():
@@ -265,15 +254,38 @@ def process_files():
     if not os.path.exists(model_path):
         return jsonify({"error": "Model could not be validated"}), 400
 
-    threading.Thread(target=modelClass.process_pdfs, args=(file_names, model_name, update_process_status)).start()
+    #def process_helper():
+    #    error, standardized_dfs = modelClass.process_pdfs(pdf_dfs, model_name, update_process_status)
+    #    if standardized_dfs is not None:
+    #        print(standardized_dfs)
+    #        for df in standardized_dfs:
+    #            save_standardized_reports(df)
 
-    return jsonify({"message": "File processing started."}), 200
+    #threading.Thread(target=process_helper).start()
+    task = celery_process_files.delay(file_names, model_name)
+    return jsonify({"message": "File processing started.", "task_id": task.id}), 200
 
 
-@app.route('/process_file_updates', methods=['GET'])
-def process_file_updates():
-    return Response(generate_process_output(), mimetype='text/event-stream')
+@app.route('/process_file_updates/<task_id>')
+def process_file_updates(task_id):
+    from worker import celery
+    def event_stream():
+        asyncres = celery.AsyncResult(task_id)
+
+        while not asyncres.ready():
+            if asyncres._cache:
+                meta = asyncres._cache.get('meta', {})
+                status_msg = meta.get('status', None)
+                print(f"Flask Server Received Update: {status_msg}")
+                if status_msg:
+                    yield f"data: {status_msg}\n\n"
+            gevent.sleep(1.0)
+        result = asyncres.result or {}
+        yield f"data: {result}\n\n"
+
+    return Response(event_stream(), mimetype='text/event-stream',
+                    headers={'X-Accel-Buffering':'no', 'Cache-Control':'no-cache'})
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, threaded=True)

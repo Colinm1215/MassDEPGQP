@@ -173,6 +173,7 @@
         <div id="modelSection" class="model-section">
             <div class="container bg-white p-5 rounded shadow text-center">
                 <h2 class="text-primary mb-4">Model</h2>
+                <label for="bypass_already_train_checkbox"></label><input type="checkbox" id="bypass_already_train_checkbox">
                 <button id="trainModel" class="btn btn-success mb-3">Train Model</button>
                 <button id="processFiles" class="btn btn-info mb-3">Process Files</button>
                 <button id="createNewModel" class="btn btn-primary mb-3">Create New Model</button>
@@ -288,6 +289,8 @@
         $('#trainModel').click(function() {
             const modelSelect = document.getElementById('modelSelect');
             const selectedValue = modelSelect.value;
+            const checkbox = document.getElementById("bypass_already_train_checkbox");
+            const isChecked = checkbox.checked;
 
             if (selectedValue === "Select Model" || selectedValue === "") {
                 alert("Please select a model.");
@@ -302,18 +305,42 @@
                     contentType: 'application/json',
                     data: JSON.stringify({
                         files: fileNames,
-                        model_name: selectedValue
+                        model_name: selectedValue,
+                        bypass_already_trained: isChecked
                     }),
                     success: function(response) {
-                        alert(response.message);
-                        const eventSource = new EventSource('/train_model_updates');
-                        eventSource.onmessage = function(event) {
+                        const processTaskId = response.task_id;
+                        const processEventSource = new EventSource('/train_model_updates/' + processTaskId);
+                        processEventSource.onmessage = function(event) {
                             $('#console').append('<p>' + event.data + '</p>');
+                            if (event.data.includes("error") ||
+                                event.data.includes("Error") ||
+                                event.data.includes("ERROR") ||
+                                event.data.includes("SUCCESS") ||
+                                event.data.includes("Success") ||
+                                event.data.includes("success")) {
+                                processEventSource.close();
+                                console.log("EventSource connection closed due to terminal message.");
+                            }
                         };
                     },
                     error: function(response) {
                         console.log("Full error response:", response);
-                        const errorMessage = response.responseJSON.error ? (response.responseJSON.error) : response.responseJSON.message;
+
+                        let errorMessage = "An unexpected error occurred.";
+
+                        if (response.responseJSON) {
+                          if (response.responseJSON.error) {
+                            errorMessage = response.responseJSON.error;
+                          } else if (response.responseJSON.message) {
+                            errorMessage = response.responseJSON.message;
+                          }
+                        } else {
+                          // The server returned HTML or no JSON at all
+                          // so you can use response.responseText or a generic fallback
+                          errorMessage = response.responseText || errorMessage;
+                        }
+
                         alert(errorMessage);
                     }
                 });
@@ -340,16 +367,41 @@
                         model_name: selectedValue
                     }),
                     success: function(response) {
-                        alert(response.message);
-                        const eventSource = new EventSource('/process_file_updates');
-                        eventSource.onmessage = function(event) {
+                        const processTaskId = response.task_id;
+                        const processEventSource = new EventSource('/train_model_updates/' + processTaskId);
+                        processEventSource.onmessage = function(event) {
+                            console.log("Received event:", event.data);
                             $('#console').append('<p>' + event.data + '</p>');
+                            if (event.data.includes("error") ||
+                                event.data.includes("Error") ||
+                                event.data.includes("ERROR") ||
+                                event.data.includes("SUCCESS") ||
+                                event.data.includes("Success") ||
+                                event.data.includes("success")) {
+                                processEventSource.close();
+                                console.log("EventSource connection closed due to terminal message.");
+                            }
                         };
+                        alert(response.message);
                     },
                     error: function(response) {
-                        console.log("Full error response:", response);
-                        const errorMessage = response.responseJSON.error ? (response.responseJSON.error) : response.responseJSON.message;
-                        alert(errorMessage);
+  console.log("Full error response:", response);
+
+  let errorMessage = "An unexpected error occurred.";
+
+  if (response.responseJSON) {
+    if (response.responseJSON.error) {
+      errorMessage = response.responseJSON.error;
+    } else if (response.responseJSON.message) {
+      errorMessage = response.responseJSON.message;
+    }
+  } else {
+    // The server returned HTML or no JSON at all
+    // so you can use response.responseText or a generic fallback
+    errorMessage = response.responseText || errorMessage;
+  }
+
+  alert(errorMessage);
                     }
                 });
             }
