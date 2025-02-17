@@ -211,7 +211,7 @@ def create_model():
     if os.path.exists(r):
         return jsonify({"error": f"Model {model_name} already exists"}), 400
     print(f"Model type: {type(model_name)}")
-    r = create_model_pkl(model_name)
+    r = secure_filename(create_model_pkl(model_name))
     if os.path.exists(r):
         return jsonify({"message": f"Model {model_name} created"}), 200
     else:
