@@ -2,6 +2,8 @@ import os
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 from flask_uploads import UploadSet, configure_uploads, UploadNotAllowed
+from werkzeug.utils import secure_filename
+
 from model import create_model_pkl
 from pdfScript import get_clean_dataframe
 from worker import celery_train_model, celery_process_files
@@ -214,23 +216,24 @@ def create_model():
     else:
         return jsonify({"error": f"Failed to create model: {r}"}), 400
 
-
+def model_validation(model_name, file_names):
+    if not file_names:
+        return jsonify({"error": "No files provided"}), 400
+    if not model_name:
+        return jsonify({"error": "No model name provided"}), 400
+    secure_name = secure_filename(model_name)
+    model_path = os.path.join("models", secure_name)
+    if not model_name.endswith(".pkl"):
+        return jsonify({"error": "Invalid model type (file is not .pkl)"}), 400
+    if not os.path.exists(model_path):
+        return jsonify({"error": "Model could not be validated"}), 400
+    return None
 @app.route('/train_model', methods=['POST'])
 def train_model():
     data = request.get_json()
     file_names = data.get('files')
     model_name = data.get('model_name')
     bypass_already_trained = data.get('bypass_already_trained')
-    model_path = os.path.join("models", model_name)
-
-    if not file_names:
-        return jsonify({"error": "No files provided"}), 400
-    if not model_name:
-        return jsonify({"error": "No model name provided"}), 400
-    if not model_name.endswith(".pkl"):
-        return jsonify({"error": "Invalid model type (file is not .pkl)"}), 400
-    if not os.path.exists(model_path):
-        return jsonify({"error": "Model could not be validated"}), 400
 
     #threading.Thread(target=modelClass.train, args=(pdf_dfs, model_name, update_training_status, bypass_already_trained)).start()
     task = celery_train_model.delay(file_names, model_name, bypass_already_trained)
