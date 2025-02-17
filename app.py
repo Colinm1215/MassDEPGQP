@@ -200,7 +200,8 @@ def delete_files():
 @app.route('/create_model', methods=['POST'])
 def create_model():
     data = request.get_json()
-    model_name = data.get('model_name')
+    model_name = secure_filename(data.get('model_name'))
+
     r = os.path.join(app.config['MODEL_FOLDER'], model_name)
 
     if not model_name:
