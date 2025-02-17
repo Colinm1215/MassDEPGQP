@@ -149,7 +149,8 @@ def delete_file():
             os.remove(file_path)
             return jsonify({"status": "success", "message": "File deleted successfully"})
         except Exception as e:
-            return jsonify({"status": "error", "message": f'{str(e)} 111'}), 500
+            app.logger.error(f"Error deleting file {file_name}: {str(e)}")
+            return jsonify({"status": "error", "message": "An internal error has occurred"}), 500
     else:
         return jsonify({"status": "error", "message": "File not found"}), 404
 
@@ -174,7 +175,8 @@ def delete_files():
                 os.remove(file_path)
                 success_files.append(file_name)
             except Exception as e:
-                failed_files.append({"file": file_name, "error": str(e)})
+                app.logger.error(f"Error deleting file {file_name}: {str(e)}")
+                failed_files.append({"file": file_name, "error": "An internal error has occurred"})
         else:
             failed_files.append({"file": file_name, "error": "File not found"})
 
