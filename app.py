@@ -1,16 +1,19 @@
 import os
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 from flask_uploads import UploadSet, configure_uploads, UploadNotAllowed
 from model import create_model_pkl
 from pdfScript import get_clean_dataframe
 from worker import celery_train_model, celery_process_files
-import gevent
+import redis
+
+
 app = Flask(__name__)
 app.config.from_object('Config.Config')
 files_upload = UploadSet('files', app.config['ALLOWED_EXTENSIONS'])
 app.config['UPLOADED_FILES_DEST'] = app.config['UPLOAD_FOLDER']
 configure_uploads(app, files_upload)
+redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
@@ -20,6 +23,17 @@ def get_file_last_modified(file_path):
     last_modified_timestamp = os.path.getmtime(file_path)
     last_modified_time = datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M:%S')
     return last_modified_time
+
+def event_stream():
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe("celery_updates")
+    for message in pubsub.listen():
+        if message["type"] == "message":
+            yield f"data: {message['data'].decode('utf-8')}\n\n"
+
+@app.route('/task_updates')
+def task_updates():
+    return Response(stream_with_context(event_stream()), mimetype="text/event-stream")
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -72,6 +86,11 @@ def storage():
         files_list.append(f)
     return render_template('storage.html', files=files_list)
 
+@app.route('/get_models', methods=['GET'])
+def get_models():
+    models = os.listdir(app.config['MODEL_FOLDER'])
+    models_list = [m for m in models if m.endswith('.pkl')]
+    return jsonify(models_list)
 
 @app.route('/model', methods=['GET'])
 def model():
@@ -217,27 +236,6 @@ def train_model():
     task = celery_train_model.delay(file_names, model_name, bypass_already_trained)
     return jsonify({"message": f"Model training started for {model_name}", "task_id": task.id}), 200
 
-@app.route('/train_model_updates/<task_id>')
-def train_model_updates(task_id):
-    from worker import celery
-    def event_stream():
-        asyncres = celery.AsyncResult(task_id)
-
-        while not asyncres.ready():
-            if asyncres._cache:
-                meta = asyncres._cache.get('meta', {})
-                status_msg = meta.get('status', None)
-                print(f"Flask Server Received Update: {status_msg}")  # Debugging log
-                if status_msg:
-                    yield f"data: {status_msg}\n\n"
-            gevent.sleep(.1)  # Small delay to avoid busy-waiting
-
-        result = asyncres.result or {}
-        yield f"data: {result}\n\n"
-
-    return Response(event_stream(), mimetype='text/event-stream',
-                    headers={'X-Accel-Buffering': 'no', 'Cache-Control': 'no-cache'})
-
 @app.route('/process_files', methods=['POST'])
 def process_files():
     data = request.get_json()
@@ -264,27 +262,6 @@ def process_files():
     #threading.Thread(target=process_helper).start()
     task = celery_process_files.delay(file_names, model_name)
     return jsonify({"message": "File processing started.", "task_id": task.id}), 200
-
-
-@app.route('/process_file_updates/<task_id>')
-def process_file_updates(task_id):
-    from worker import celery
-    def event_stream():
-        asyncres = celery.AsyncResult(task_id)
-
-        while not asyncres.ready():
-            if asyncres._cache:
-                meta = asyncres._cache.get('meta', {})
-                status_msg = meta.get('status', None)
-                print(f"Flask Server Received Update: {status_msg}")
-                if status_msg:
-                    yield f"data: {status_msg}\n\n"
-            gevent.sleep(1.0)
-        result = asyncres.result or {}
-        yield f"data: {result}\n\n"
-
-    return Response(event_stream(), mimetype='text/event-stream',
-                    headers={'X-Accel-Buffering':'no', 'Cache-Control':'no-cache'})
 
 
 if __name__ == '__main__':

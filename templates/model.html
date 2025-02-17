@@ -42,9 +42,8 @@
             margin-left: 250px;
         }
 
-        .file-section,
         .model-section {
-            width: 48%;
+            width: 66%;
         }
 
 
@@ -185,9 +184,9 @@
                     {% endfor %}
                 </select>
 
-                <div id="console" class="console">
-                    <p>Console output will appear here...</p>
-                </div>
+            <div id="console" class="console" style="width: 100%; height: 200px; background-color: #333; color: #fff; padding: 10px; margin-top: 20px; overflow-y: auto; font-family: 'Courier New', Courier, monospace;">
+                <p>Console output will appear here...</p>
+            </div>
             </div>
         </div>
     </div>
@@ -210,6 +209,11 @@
     </div>
     <script>
         $(document).ready(function() {
+            const eventSource = new EventSource('/task_updates');
+            eventSource.onmessage = function(event) {
+                console.log("Received update:", event.data);
+                $('#console').append('<p>' + event.data + '</p>');
+            };
             $("#uploadPage").click(function() {
                 window.location.href = "/";
             });
@@ -309,20 +313,7 @@
                         bypass_already_trained: isChecked
                     }),
                     success: function(response) {
-                        const processTaskId = response.task_id;
-                        const processEventSource = new EventSource('/train_model_updates/' + processTaskId);
-                        processEventSource.onmessage = function(event) {
-                            $('#console').append('<p>' + event.data + '</p>');
-                            if (event.data.includes("error") ||
-                                event.data.includes("Error") ||
-                                event.data.includes("ERROR") ||
-                                event.data.includes("SUCCESS") ||
-                                event.data.includes("Success") ||
-                                event.data.includes("success")) {
-                                processEventSource.close();
-                                console.log("EventSource connection closed due to terminal message.");
-                            }
-                        };
+                        alert(response.message);
                     },
                     error: function(response) {
                         console.log("Full error response:", response);
@@ -367,21 +358,6 @@
                         model_name: selectedValue
                     }),
                     success: function(response) {
-                        const processTaskId = response.task_id;
-                        const processEventSource = new EventSource('/train_model_updates/' + processTaskId);
-                        processEventSource.onmessage = function(event) {
-                            console.log("Received event:", event.data);
-                            $('#console').append('<p>' + event.data + '</p>');
-                            if (event.data.includes("error") ||
-                                event.data.includes("Error") ||
-                                event.data.includes("ERROR") ||
-                                event.data.includes("SUCCESS") ||
-                                event.data.includes("Success") ||
-                                event.data.includes("success")) {
-                                processEventSource.close();
-                                console.log("EventSource connection closed due to terminal message.");
-                            }
-                        };
                         alert(response.message);
                     },
                     error: function(response) {
@@ -415,6 +391,28 @@
             $('#myModal').fadeOut();
         });
 
+        function updateModelDropdown() {
+            $.ajax({
+                url: '/get_models',
+                type: 'GET',
+                success: function (models) {
+                    console.log("Updated models:", models);
+
+                    const modelSelect = $('#modelSelect');
+                    modelSelect.empty();
+                    modelSelect.append('<option value="">Select Model</option>');
+
+                    models.forEach(model => {
+                        modelSelect.append(`<option value="${model}">${model}</option>`);
+                    });
+                },
+                error: function (response) {
+                    console.log("Error fetching models:", response);
+                    alert("Failed to update model list.");
+                }
+            });
+        }
+
         $('#submitInput').click(function() {
             const inputText = $('#userInput').val();
             console.log("Model Name:", inputText);
@@ -431,7 +429,7 @@
                 data: payload,
                 success: function(response) {
                     alert(response.message || "Model created successfully!");
-                    location.reload();
+                    updateModelDropdown()
                 },
                 error: function(response) {
                     console.log("Full error response:", response);

@@ -237,22 +237,18 @@
 
         $('#selectAllPDF').click(function() {
             $('.file-item').each(function() {
-                const fileName = $(this).find('.file-name').text().toLowerCase();
-                if ($(this).hasClass('show') && !$(this).hasClass('d-none')) {
-                    if (typeof fileName === 'string' && fileName.toLowerCase().endsWith('.pdf')) {
-                        $(this).find('.file-checkbox').prop('checked', true);
-                    }
+                const fileName = $(this).find('.file-name').text().trim().toLowerCase();
+                if (!$(this).hasClass('d-none') && fileName.endsWith('.pdf')) {
+                    $(this).find('.file-checkbox').prop('checked', true);
                 }
             });
         });
 
         $('#selectAllCSV').click(function() {
             $('.file-item').each(function() {
-                const fileName = $(this).find('.file-name').text().toLowerCase();
-                if ($(this).hasClass('show') && !$(this).hasClass('d-none')) {
-                    if (typeof fileName === 'string' && fileName.toLowerCase().endsWith('.csv')) {
-                        $(this).find('.file-checkbox').prop('checked', true);
-                    }
+                const fileName = $(this).find('.file-name').text().trim().toLowerCase();
+                if (!$(this).hasClass('d-none') && fileName.endsWith('.csv')) {
+                    $(this).find('.file-checkbox').prop('checked', true);
                 }
             });
         });

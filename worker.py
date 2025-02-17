@@ -2,6 +2,9 @@ import os
 import pandas as pd
 from celery import Celery, current_task
 from model import ModelLoadStatus, PDFStandardizer
+import redis
+
+redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 celery = Celery(
     'MassDEP',
@@ -39,6 +42,7 @@ def save_standardized_reports(standardized_df):
 
 def _send_update(message: str):
     print(f"Updating Celery state: {message}")
+    redis_client.publish("celery_updates", message)
     current_task.update_state(state='PROGRESS', meta={'status': message})
 
 @celery.task(bind=True)
