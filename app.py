@@ -234,6 +234,9 @@ def train_model():
     file_names = data.get('files')
     model_name = data.get('model_name')
     bypass_already_trained = data.get('bypass_already_trained')
+    valid = model_validation(model_name, file_names)
+    if valid:
+        return valid, 400
 
     #threading.Thread(target=modelClass.train, args=(pdf_dfs, model_name, update_training_status, bypass_already_trained)).start()
     task = celery_train_model.delay(file_names, model_name, bypass_already_trained)
@@ -244,16 +247,9 @@ def process_files():
     data = request.get_json()
     file_names = data.get('files')
     model_name = data.get('model_name')
-    model_path = os.path.join("models", model_name)
-
-    if not file_names:
-        return jsonify({"error": "No files provided"}), 400
-    if not model_name:
-        return jsonify({"error": "No model name provided"}), 400
-    if not model_name.endswith(".pkl"):
-        return jsonify({"error": "Invalid model type (file is not .pkl)"}), 400
-    if not os.path.exists(model_path):
-        return jsonify({"error": "Model could not be validated"}), 400
+    valid = model_validation(model_name, file_names)
+    if valid:
+        return valid, 400
 
     #def process_helper():
     #    error, standardized_dfs = modelClass.process_pdfs(pdf_dfs, model_name, update_process_status)
