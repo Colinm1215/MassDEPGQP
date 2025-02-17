@@ -1,0 +1,2 @@
+celery -A worker.celery worker -l info -P gevent
+cd Redis-x64-3.0.504 | redis-server.exe

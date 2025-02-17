@@ -42,9 +42,8 @@
             margin-left: 250px;
         }
 
-        .file-section,
         .model-section {
-            width: 48%;
+            width: 66%;
         }
 
 
@@ -173,6 +172,7 @@
         <div id="modelSection" class="model-section">
             <div class="container bg-white p-5 rounded shadow text-center">
                 <h2 class="text-primary mb-4">Model</h2>
+                <label for="bypass_already_train_checkbox"></label><input type="checkbox" id="bypass_already_train_checkbox">
                 <button id="trainModel" class="btn btn-success mb-3">Train Model</button>
                 <button id="processFiles" class="btn btn-info mb-3">Process Files</button>
                 <button id="createNewModel" class="btn btn-primary mb-3">Create New Model</button>
@@ -184,9 +184,9 @@
                     {% endfor %}
                 </select>
 
-                <div id="console" class="console">
-                    <p>Console output will appear here...</p>
-                </div>
+            <div id="console" class="console" style="width: 100%; height: 200px; background-color: #333; color: #fff; padding: 10px; margin-top: 20px; overflow-y: auto; font-family: 'Courier New', Courier, monospace;">
+                <p>Console output will appear here...</p>
+            </div>
             </div>
         </div>
     </div>
@@ -209,6 +209,11 @@
     </div>
     <script>
         $(document).ready(function() {
+            const eventSource = new EventSource('/task_updates');
+            eventSource.onmessage = function(event) {
+                console.log("Received update:", event.data);
+                $('#console').append('<p>' + event.data + '</p>');
+            };
             $("#uploadPage").click(function() {
                 window.location.href = "/";
             });
@@ -288,6 +293,8 @@
         $('#trainModel').click(function() {
             const modelSelect = document.getElementById('modelSelect');
             const selectedValue = modelSelect.value;
+            const checkbox = document.getElementById("bypass_already_train_checkbox");
+            const isChecked = checkbox.checked;
 
             if (selectedValue === "Select Model" || selectedValue === "") {
                 alert("Please select a model.");
@@ -302,18 +309,29 @@
                     contentType: 'application/json',
                     data: JSON.stringify({
                         files: fileNames,
-                        model_name: selectedValue
+                        model_name: selectedValue,
+                        bypass_already_trained: isChecked
                     }),
                     success: function(response) {
                         alert(response.message);
-                        const eventSource = new EventSource('/train_model_updates');
-                        eventSource.onmessage = function(event) {
-                            $('#console').append('<p>' + event.data + '</p>');
-                        };
                     },
                     error: function(response) {
                         console.log("Full error response:", response);
-                        const errorMessage = response.responseJSON.error ? (response.responseJSON.error) : response.responseJSON.message;
+
+                        let errorMessage = "An unexpected error occurred.";
+
+                        if (response.responseJSON) {
+                          if (response.responseJSON.error) {
+                            errorMessage = response.responseJSON.error;
+                          } else if (response.responseJSON.message) {
+                            errorMessage = response.responseJSON.message;
+                          }
+                        } else {
+                          // The server returned HTML or no JSON at all
+                          // so you can use response.responseText or a generic fallback
+                          errorMessage = response.responseText || errorMessage;
+                        }
+
                         alert(errorMessage);
                     }
                 });
@@ -341,15 +359,25 @@
                     }),
                     success: function(response) {
                         alert(response.message);
-                        const eventSource = new EventSource('/process_file_updates');
-                        eventSource.onmessage = function(event) {
-                            $('#console').append('<p>' + event.data + '</p>');
-                        };
                     },
                     error: function(response) {
-                        console.log("Full error response:", response);
-                        const errorMessage = response.responseJSON.error ? (response.responseJSON.error) : response.responseJSON.message;
-                        alert(errorMessage);
+  console.log("Full error response:", response);
+
+  let errorMessage = "An unexpected error occurred.";
+
+  if (response.responseJSON) {
+    if (response.responseJSON.error) {
+      errorMessage = response.responseJSON.error;
+    } else if (response.responseJSON.message) {
+      errorMessage = response.responseJSON.message;
+    }
+  } else {
+    // The server returned HTML or no JSON at all
+    // so you can use response.responseText or a generic fallback
+    errorMessage = response.responseText || errorMessage;
+  }
+
+  alert(errorMessage);
                     }
                 });
             }
@@ -362,6 +390,28 @@
         $('#closeModal').click(function() {
             $('#myModal').fadeOut();
         });
+
+        function updateModelDropdown() {
+            $.ajax({
+                url: '/get_models',
+                type: 'GET',
+                success: function (models) {
+                    console.log("Updated models:", models);
+
+                    const modelSelect = $('#modelSelect');
+                    modelSelect.empty();
+                    modelSelect.append('<option value="">Select Model</option>');
+
+                    models.forEach(model => {
+                        modelSelect.append(`<option value="${model}">${model}</option>`);
+                    });
+                },
+                error: function (response) {
+                    console.log("Error fetching models:", response);
+                    alert("Failed to update model list.");
+                }
+            });
+        }
 
         $('#submitInput').click(function() {
             const inputText = $('#userInput').val();
@@ -379,7 +429,7 @@
                 data: payload,
                 success: function(response) {
                     alert(response.message || "Model created successfully!");
-                    location.reload();
+                    updateModelDropdown()
                 },
                 error: function(response) {
                     console.log("Full error response:", response);

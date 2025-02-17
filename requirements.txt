@@ -1,0 +1,12 @@
+Flask
+Flask-Reuploaded
+pandas
+torch
+transformers
+spacy
+pymupdf
+symspellpy
+Pillow
+celery
+redis
+gevent
