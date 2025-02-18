@@ -94,6 +94,26 @@ def get_models():
     models_list = [m for m in models if m.endswith('.pkl')]
     return jsonify(models_list)
 
+@app.route('/get_uploads', methods=['GET'])
+def get_uploads():
+    files = os.listdir(app.config['UPLOAD_FOLDER'])
+    files_list = [f for f in files if allowed_file(f)]
+    return jsonify(files_list)
+
+@app.route('/get_processed_files', methods=['GET'])
+def get_processed_files():
+    processed_folder = app.config['PROCESSED_FOLDER']
+    processed_files_list = []
+
+    for root, _, files in os.walk(processed_folder):
+        for file in files:
+            if file.endswith('.csv'):
+                relative_path = os.path.relpath(os.path.join(root, file), processed_folder)
+                processed_files_list.append(relative_path.replace("\\", "/"))
+
+    return jsonify(processed_files_list)
+
+
 @app.route('/model', methods=['GET'])
 def model():
     files = os.listdir(app.config['UPLOAD_FOLDER'])
@@ -112,7 +132,9 @@ def model():
             models_list.append(m)
     print(models_list)
     return render_template('model.html', files=files_list, models=models_list)
-
+@app.route('/modelOutputs', methods=['GET'])
+def modelOutputs():
+    return render_template('modelOutputs.html')
 
 @app.route('/preprocess', methods=['POST'])
 def preprocess_files():
@@ -138,12 +160,17 @@ def preprocess_files():
 
 @app.route('/delete', methods=['POST'])
 def delete_file():
-    file_name = secure_filename(request.form.get('file'))
+    file_path = request.form.get('file')
+    file_name =  secure_filename(os.path.basename(file_path))
+    file_dir = os.path.dirname(file_path)
+    if file_dir:
+        file_path = os.path.join(app.config.get('PROCESSED_FOLDER'), file_path)
+    else:
+        file_path = os.path.join(app.config.get('UPLOAD_FOLDER'), file_name)
 
+    print(file_path)
     if not file_name:
         return jsonify({"status": "error", "message": "No file name provided"}), 400
-
-    file_path = os.path.join(app.config.get('UPLOAD_FOLDER'), file_name)
 
     if os.path.exists(file_path):
         try:
@@ -167,9 +194,13 @@ def delete_files():
     failed_files = []
     success_files = []
 
-    for file_name in file_names:
-        file_name = secure_filename(file_name)
-        file_path = os.path.join(app.config.get('UPLOAD_FOLDER'), file_name)
+    for file_path in file_names:
+        file_name =  secure_filename(os.path.basename(file_path))
+        file_dir = os.path.dirname(file_path)
+        if file_dir:
+            file_path = os.path.join(app.config.get('PROCESSED_FOLDER'), file_path)
+        else:
+            file_path = os.path.join(app.config.get('UPLOAD_FOLDER'), file_name)
 
         if os.path.exists(file_path):
             try:
