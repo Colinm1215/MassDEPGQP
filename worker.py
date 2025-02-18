@@ -32,8 +32,9 @@ celery.conf.update(
 
 modelClass = PDFStandardizer()
 
-def save_standardized_reports(standardized_df):
-    processed_folder = 'processed'
+def save_standardized_reports(standardized_df, model_name):
+    model_name = model_name.split(".")[0]
+    processed_folder = os.path.join('processed', f'{model_name}')
     if not os.path.exists(processed_folder):
         os.makedirs(processed_folder)
     fname = standardized_df["filename"].iloc[0]
