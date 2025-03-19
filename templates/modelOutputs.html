@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MassDEP File Upload</title>
+    <title>MassDEP Model Outputs</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='bootstrap-5.3.3-dist/css/bootstrap.css') }}">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
@@ -17,7 +16,6 @@
             background-color: #343a40;
             padding-top: 20px;
         }
-
         .sidebar a {
             padding: 10px 20px;
             display: block;
@@ -25,16 +23,13 @@
             text-decoration: none;
             font-size: 18px;
         }
-
         .sidebar a:hover {
             background-color: #495057;
         }
-
         .content {
             margin-left: 260px;
             padding: 20px;
         }
-
         .file-item {
             display: flex;
             justify-content: space-between;
@@ -42,31 +37,25 @@
             border-bottom: 1px solid #ddd;
             padding: 10px 0;
         }
-
         .file-item:last-child {
             border-bottom: none;
         }
-
         .file-name {
             flex-grow: 1;
             padding-right: 10px;
         }
-
         .dep-header {
             margin-left: 250px;
         }
-
         .filters-bar {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
         }
-
-        .filters-bar>div {
+        .filters-bar > div {
             margin-right: 10px;
         }
-
         .file-date {
             padding: 2px 10px;
             background-color: #f8f9fa;
@@ -79,29 +68,28 @@
         </div>
     </div>
 </head>
-
 <body class="bg-light">
-
     <div class="sidebar">
         <h4 class="text-center text-white">MassDEP</h4>
         <a href="#" id="uploadPage">Upload</a>
         <a href="#" id="filesPage">Files</a>
         <a href="#" id="modelPage">Model</a>
+        <a href="#" id="modelOutputsPage">Model Outputs</a>
     </div>
-
     <div class="content">
         <div id="fileSection">
             <div class="container bg-white p-5 rounded shadow text-center">
                 <h2 class="text-primary mb-4">Files</h2>
-
                 <div class="filters-bar">
                     <div>
-                        <label for="searchInput"></label><input type="text" id="searchInput" class="form-control" placeholder="Search by name">
+                        <label for="searchInput"></label>
+                        <input type="text" id="searchInput" class="form-control" placeholder="Search by name">
                     </div>
-                    <label for="modelSelect"></label><select id="modelSelect" class="form-select mb-3" style="width: 200px;">
+                    <label for="modelSelect"></label>
+                    <select id="modelSelect" class="form-select mb-3" style="width: 200px;">
                         <option value="">Select Model</option>
-                            {% for model in models %}
-                                <option value="{{ model }}">{{ model }}</option>
+                        {% for model in models %}
+                            <option value="{{ model }}">{{ model }}</option>
                         {% endfor %}
                     </select>
                     <div>
@@ -112,38 +100,23 @@
                         </select>
                     </div>
                 </div>
-
                 <button id="selectAll" class="btn btn-secondary mb-2">Select All</button>
                 <button id="unSelectAll" class="btn btn-secondary mb-2">Un-Select All</button>
-                <button id="deleteAll" class="btn btn-danger mb-2 ">Delete All Selected</button>
-
-
-                <ul id="processedFileList" class="list-unstyled">
-                </ul>
+                <button id="deleteAll" class="btn btn-danger mb-2">Delete All Selected</button>
+                <ul id="processedFileList" class="list-unstyled"></ul>
             </div>
         </div>
     </div>
-
     <script>
         $(document).ready(function() {
             $("#modelSelect").change(function () {
                 const selectedModel = $(this).val();
-                console.log("Selected Model:", selectedModel);
                 updateProcessedFiles();
             });
-            $("#uploadPage").click(function() {
-                window.location.href = "/";
-            });
-            $("#filesPage").click(function() {
-                window.location.href = "/storage";
-            });
-            $("#modelPage").click(function() {
-                window.location.href = "/model";
-            });
-            $("#modelOutputsPage").click(function() {
-                window.location.href = "/modelOutputs";
-            });
-
+            $("#uploadPage").click(function() { window.location.href = "/"; });
+            $("#filesPage").click(function() { window.location.href = "/storage"; });
+            $("#modelPage").click(function() { window.location.href = "/model"; });
+            $("#modelOutputsPage").click(function() { window.location.href = "/modelOutputs"; });
             function updateProcessedFiles() {
                 $.ajax({
                     url: '/get_processed_files',
@@ -153,8 +126,7 @@
                         const selectedValue = modelSelect.value;
                         const fileList = $('#processedFileList');
                         fileList.empty();
-
-                        if (selectedValue === "Select Model" || selectedValue === "") {
+                        if (!selectedValue) {
                             fileList.append('<li class="text-muted">No Model selected</li>');
                         } else if (processed_files.length === 0) {
                             fileList.append(`<li class="text-muted">No output from ${selectedValue}</li>`);
@@ -162,9 +134,6 @@
                             processed_files.forEach(function (file) {
                                 const parts = file.split('/');
                                 const name = parts.pop();
-                                const dir = parts.join('/');
-                                console.log(dir)
-                                console.log(file)
                                 const listItem = `
                                     <li class="file-item d-flex align-items-center" data-file="${file}">
                                         <label>
@@ -178,10 +147,7 @@
                             });
                         }
                     },
-                    error: function (response) {
-                        console.log("Error fetching files:", response);
-                        alert("Failed to update files list.");
-                    }
+                    error: function () { alert("Failed to update files list."); }
                 });
             }
             function updateModels() {
@@ -189,37 +155,26 @@
                     url: '/get_models',
                     type: 'GET',
                     success: function (models) {
-                        console.log("Updated models:", models);
-
                         const modelSelect = $('#modelSelect');
                         modelSelect.empty();
                         modelSelect.append('<option value="">Select Model</option>');
-
                         models.forEach(model => {
                             modelSelect.append(`<option value="${model}">${model}</option>`);
                         });
                     },
-                    error: function (response) {
-                        console.log("Error fetching models:", response);
-                        alert("Failed to update models list.");
-                    }
+                    error: function () { alert("Failed to update models list."); }
                 });
             }
-            updateModels()
-            updateProcessedFiles()
-
+            updateModels();
+            updateProcessedFiles();
             $('#processedFileList').on('click', '.delete-btn', function() {
                 const fileItem = $(this).closest('.file-item');
                 const fileName = $(this).data('filename');
-                console.log(fileName)
-
                 if (confirm("Are you sure you want to delete this file?")) {
                     $.ajax({
                         url: '/delete',
                         type: 'POST',
-                        data: {
-                            file: fileName
-                        },
+                        data: { file: fileName },
                         success: function(response) {
                             if (response.status === 'success') {
                                 fileItem.remove();
@@ -228,107 +183,21 @@
                                 alert('Error deleting file: ' + response.message);
                             }
                         },
-                        error: function() {
-                            alert('Error deleting file.');
-                        }
+                        error: function() { alert('Error deleting file.'); }
                     });
                 }
             });
-
             $('#selectAll').click(function() {
                 $('.file-item').each(function() {
-                    if (!$(this).hasClass('d-none')) {
-                        $(this).find('.file-checkbox').prop('checked', true);
-                    }
+                    $(this).find('.file-checkbox').prop('checked', true);
                 });
             });
-
             $('#unSelectAll').click(function() {
                 $('.file-item').each(function() {
                     $(this).find('.file-checkbox').prop('checked', false);
                 });
             });
         });
-
-        $('#deleteAll').click(function() {
-            const fileNames = [];
-            $('.file-item').each(function() {
-                if ($(this).find('.file-checkbox').prop('checked')) {
-                    fileNames.push($(this).find('.delete-btn').data('filename'));
-                }
-            });
-
-            if (fileNames.length === 0) {
-                alert("Please select at least one file to delete.");
-                return;
-            }
-
-            if (confirm("Are you sure you want to delete all selected files?")) {
-                $.ajax({
-                    url: '/deleteMultiple',
-                    type: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ files: fileNames }),
-                    success: function(response) {
-                        if (response.status === 'success') {
-                            alert('Files deleted successfully');
-                            response.deleted_files.forEach(function(filePath) {
-                                $('#processedFileList .file-item').filter(function() {
-                                    return $(this).find('.delete-btn').data('filename') === filePath;
-                                }).remove();
-                            });
-                        } else {
-                            alert('Error deleting files: ' + response.message);
-                        }
-                    },
-                    error: function(response) {
-                        console.log("Full error response:", response);
-                        const errorMessage = response.responseJSON.error ? response.responseJSON.error : response.responseJSON.message;
-                        alert(errorMessage);
-                    }
-                });
-            }
-        });
-
-
-        $('#searchInput').on('input', function() {
-            const searchTerm = $(this).val().toLowerCase();
-            $('.file-item').each(function() {
-                const fileName = $(this).find('.file-name').text().toLowerCase();
-                console.log('Searching for:', searchTerm, 'File:', fileName);
-                if (fileName.includes(searchTerm) || searchTerm === "" || !searchTerm) {
-                    console.log(fileName, ' Visible')
-                    $(this).addClass('show').removeClass('d-none');
-                } else {
-                    console.log(fileName, ' Invisible')
-                    $(this).removeClass('show').addClass('d-none');
-                }
-            });
-        });
-
-        $('#sortBy').change(function() {
-            const sortBy = $(this).val();
-
-            const fileItems = $('.file-item').toArray();
-
-            fileItems.sort(function(a, b) {
-                const fileA = JSON.parse($(a).data('file').replace(/'/g, '"'));
-                const fileB = JSON.parse($(b).data('file').replace(/'/g, '"'));
-
-                if (sortBy === 'name') {
-                    return fileA.file.localeCompare(fileB.file);
-                } else if (sortBy === 'date') {
-                    const dateA = new Date(fileA.date);
-                    const dateB = new Date(fileB.date);
-                    return dateA - dateB;
-                }
-                return 0;
-            });
-
-            $('#processedFileList').empty().append(fileItems);
-        });
     </script>
-
 </body>
-
 </html>
