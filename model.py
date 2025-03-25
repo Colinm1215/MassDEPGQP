@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 
 import spacy
+from spacy.pipeline import EntityRuler
 from enum import Enum
 from transformers import T5ForConditionalGeneration, T5Tokenizer, RobertaForSequenceClassification, RobertaTokenizer
 import torch
@@ -31,7 +32,6 @@ def create_model_record(model_name):
     db.session.commit()
     return new_model
 
-
 class PDFStandardizer:
     def __init__(self):
         if not os.path.exists("models"):
@@ -45,6 +45,16 @@ class PDFStandardizer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.t5_model.to(self.device)
         self.discriminator.to(self.device)
+        ruler = self.nlp.add_pipe("entity_ruler", before="ner")
+
+        # Example patterns
+        patterns = [
+            {"label": "SOIL_TYPE", "pattern": [{"LOWER": "soil"}, {"LOWER": "type"}, {"IS_PUNCT": True, "OP": "?"}, {"LOWER": "sandy", "OP": "?"}, {"LOWER": "loam", "OP": "?"}]},
+            {"label": "ORDER_NUMBER", "pattern": [{"LOWER": "order"}, {"IS_PUNCT": True, "OP": "?"}, {"LOWER": "#", "OP": "?"}, {"IS_ALPHA": False, "OP": "+"}]},
+            {"label": "TEST_RESULT", "pattern": "Contamination Test: Passed"}
+            # etc.
+        ]
+        ruler.add_patterns(patterns)
 
     def fine_tune(self, model_name, training_data, label_data, standard_format, entity_data=None,
                   epochs=3, batch_size=4, lr=5e-5, update_callback=None):
@@ -166,19 +176,17 @@ class PDFStandardizer:
             "named_entities": entity_data if entity_data else []
         }
 
-    def extract_entities(self, text):
+    def extract_entities(self, text, update_callback):
         doc = self.nlp(text)
-        entities = {"Locations": [], "Dates": [], "Quantities": [], "Other": []}
+        all_entities = []
+
         for ent in doc.ents:
-            if ent.label_ in ["GPE", "LOC"]:
-                entities["Locations"].append(ent.text)
-            elif ent.label_ == "DATE":
-                entities["Dates"].append(ent.text)
-            elif ent.label_ in ["CARDINAL", "QUANTITY"]:
-                entities["Quantities"].append(ent.text)
-            else:
-                entities["Other"].append(ent.text)
-        return entities
+            all_entities.append({"entity": ent.text, "type": ent.label_})
+        if update_callback:
+            update_callback("Extracting entities...")
+            update_callback(f"Entities found: {len(all_entities)}")
+            update_callback(f"Entities: {all_entities}")
+        return all_entities
 
     def generate_standardized_report(self, text, max_input_length=512, chunk_overlap=0):
         prefix = "standardize: "
@@ -236,13 +244,13 @@ class PDFStandardizer:
         for df_index, df in enumerate(pdf_dfs_training):
             for text in df["Text"]:
                 training_data.append(text)
-                entity_data.append(self.extract_entities(text))
+                entity_data.append(self.extract_entities(text, update_callback))
 
         label_data = []
         for df_index, df in enumerate(pdf_dfs_label):
             for text in df["Text"]:
                 label_data.append(text)
-                extracted_entities = self.extract_entities(text)
+                extracted_entities = self.extract_entities(text, update_callback)
                 for entity in extracted_entities:
                     if entity not in entity_data:
                         entity_data.append(entity)
@@ -299,7 +307,20 @@ class PDFStandardizer:
 
         # Update the TrainingData table if you have metadata (e.g., file names, file paths, processed_at)
         # For example, if you have a list of dictionaries with this info, iterate and add them.
-        for file in pdf_dfs:
+        for file in pdf_dfs_training:
+            file_name = file["filename"] if "filename" in file.columns else "unknown"
+            file_path = f"uploads/{file_name}"
+            processed_at = datetime.utcnow()
+
+            new_td = TrainingData(
+                model_system_id=record.id,
+                file_name=file_name,
+                file_path=file_path,
+                processed_at=processed_at
+            )
+            db.session.add(new_td)
+
+        for file in pdf_dfs_label:
             file_name = file["filename"] if "filename" in file.columns else "unknown"
             file_path = f"uploads/{file_name}"
             processed_at = datetime.utcnow()
