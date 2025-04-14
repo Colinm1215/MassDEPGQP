@@ -6,6 +6,7 @@ import spacy
 from spacy.pipeline import EntityRuler
 from enum import Enum
 from transformers import T5ForConditionalGeneration, T5Tokenizer, RobertaForSequenceClassification, RobertaTokenizer
+from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
 import torch
 import pandas as pd
 from werkzeug.utils import secure_filename
@@ -36,23 +37,26 @@ class PDFStandardizer:
     def __init__(self):
         if not os.path.exists("models"):
             os.makedirs("models")
-        self.nlp = spacy.load("en_core_web_sm")
-        self.t5_model = T5ForConditionalGeneration.from_pretrained("t5-small")
-        self.t5_tokenizer = T5Tokenizer.from_pretrained("t5-small")
-        self.discriminator = RobertaForSequenceClassification.from_pretrained("roberta-base")
-        self.discriminator_tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
-        # Place models on device
+        
+        # Initialize device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.t5_model.to(self.device)
-        self.discriminator.to(self.device)
+        
+        # Temporarily block model initialization for spoof demo
+        # self.t5_model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-base")
+        # self.t5_tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-base")
+        # self.t5_model.to(self.device)
+        
+        # self.discriminator = RobertaForSequenceClassification.from_pretrained("roberta-base")
+        # self.discriminator_tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+        # self.discriminator.to(self.device)
+        
+        # Initialize NLP pipeline with entity ruler
+        self.nlp = spacy.load("en_core_web_sm")
         ruler = self.nlp.add_pipe("entity_ruler", before="ner")
-
-        # Example patterns
         patterns = [
             {"label": "SOIL_TYPE", "pattern": [{"LOWER": "soil"}, {"LOWER": "type"}, {"IS_PUNCT": True, "OP": "?"}, {"LOWER": "sandy", "OP": "?"}, {"LOWER": "loam", "OP": "?"}]},
             {"label": "ORDER_NUMBER", "pattern": [{"LOWER": "order"}, {"IS_PUNCT": True, "OP": "?"}, {"LOWER": "#", "OP": "?"}, {"IS_ALPHA": False, "OP": "+"}]},
             {"label": "TEST_RESULT", "pattern": "Contamination Test: Passed"}
-            # etc.
         ]
         ruler.add_patterns(patterns)
 
@@ -278,7 +282,7 @@ class PDFStandardizer:
         generator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="generator").first()
         if not generator_llm:
             generator_llm = LLMModel(model_system_id=record.id, llm_type="generator")
-        generator_llm.architecture = "t5-small"
+        generator_llm.architecture = "google/flan-t5-base"
         generator_llm.weights_path = fine_tune_result["generator_weights_path"]
         generator_llm.hyperparameters = json.dumps(fine_tune_result["hyperparameters"])
         generator_llm.train_status = TrainStatus.TRAINED.value

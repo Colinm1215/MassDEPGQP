@@ -94,19 +94,20 @@ def get_processed_files():
                 processed_files_list.append(relative_path.replace("\\", "/"))
     return jsonify(processed_files_list)
 
-@app.route('/model', methods=['GET'])
-def model():
-    # List uploaded CSV files.
-    files = os.listdir(app.config['UPLOAD_FOLDER'])
-    files_list = []
-    for file in files:
-        if file.endswith('.csv'):
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], file)
-            files_list.append({"file": file, "date": get_file_last_modified(file_path)})
-    # Get model names from DB.
-    model_records = ModelSystem.query.all()
-    models_list = [record.name for record in model_records]
-    return render_template('model.html', files=files_list, models=models_list)
+# @app.route('/model', methods=['GET'])
+# def model():
+#     # List uploaded CSV files.
+#     # files = os.listdir(app.config['UPLOAD_FOLDER'])
+#     # files_list = []
+#     # for file in files:
+#     #     if file.endswith('.csv'):
+#     #         file_path = os.path.join(app.config['UPLOAD_FOLDER'], file)
+#     #         files_list.append({"file": file, "date": get_file_last_modified(file_path)})
+#     # Get model names from DB.
+#     # model_records = ModelSystem.query.all()
+#     # models_list = [record.name for record in model_records]
+#     # return render_template('model.html', files=files_list, models=models_list)
+#     pass  # Temporarily disabled for debugging other features
 
 @app.route('/modelOutputs', methods=['GET'])
 def modelOutputs():
