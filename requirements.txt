@@ -10,3 +10,8 @@ Pillow
 celery
 redis
 gevent
+flask_cors
+werkzeug
+flask_sqlalchemy
+sentencepiece
+scikit-learn

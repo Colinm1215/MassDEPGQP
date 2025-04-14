@@ -1,3 +1,6 @@
 /models
 instance/models.db
 Redis-x64-3.0.504/dump.rdb
+/newenv
+__pycache__
+__pycache__/celery_app.cpython-311.pyc
