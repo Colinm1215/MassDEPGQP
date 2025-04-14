@@ -6,8 +6,8 @@ from werkzeug.utils import secure_filename
 from pdfScript import get_clean_dataframe
 from worker import celery_train_model, celery_process_files
 import redis
-from database import db, ModelSystem  # DB models
-from model import create_model_record  # New function to create a model record in DB
+from database import db, ModelSystem
+from model import create_model_record
 from flask_cors import CORS
 app = Flask(__name__)
 app.config.from_object('Config.Config')
