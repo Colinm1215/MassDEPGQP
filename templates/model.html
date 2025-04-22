@@ -345,7 +345,7 @@
             $('#fileList').empty().append(fileItems);
         });
 
-        function getSelectedFilesFromFileList1() {
+        function getSelectedFilesFromFileListFirst() {
             const selectedFiles = [];
             $('#fileList1 .file-checkbox:checked').each(function () {
                 const fileName = $(this).closest('.file-item').find('.file-name').text();
@@ -353,7 +353,8 @@
             });
             return selectedFiles;
         }
-        function getSelectedFilesFromFileList2() {
+
+        function getSelectedFilesFromFileListSecondary() {
             const selectedFiles = [];
             $('#fileList2 .file-checkbox:checked').each(function () {
                 const fileName = $(this).closest('.file-item').find('.file-name').text();
@@ -361,9 +362,10 @@
             });
             return selectedFiles;
         }
+
         function getSelectFiles() {
-            const primaryFiles = getSelectedFilesFromFileList1();
-            const secondaryFiles = getSelectedFilesFromFileList1();
+            const primaryFiles = getSelectedFilesFromFileListFirst();
+            const secondaryFiles = getSelectedFilesFromFileListSecondary();
 
             if (primaryFiles.length === 0 && secondaryFiles.length === 0) {
                 alert("Please select at least one file from either list.");
