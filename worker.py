@@ -64,6 +64,9 @@ def celery_train_model(self, training_files, label_files, model_name, bypass_alr
 
 @celery.task(bind=True)
 def celery_process_files(self, file_names, model_name):
+    def callback_fn(msg):
+        if not hasattr(self, 'error_reported') or not self.error_reported:
+            _send_update(msg)
     try:
         from app import app
         with app.app_context():
@@ -73,9 +76,6 @@ def celery_process_files(self, file_names, model_name):
                 if os.path.exists(csv_path):
                     df = pd.read_csv(csv_path)
                     pdf_dfs_data.append(df)
-            def callback_fn(msg):
-                if not hasattr(self, 'error_reported') or not self.error_reported:
-                    _send_update(msg)
             error, standardized_dfs = modelClass.process_pdfs(pdf_dfs_data, model_name, update_callback=callback_fn)
             if error == ModelLoadStatus.SUCCESS:
                 _send_update("File processing completed.")

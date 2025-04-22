@@ -459,7 +459,7 @@
                 alert("Please select a model.");
                 return;
             }
-            const fileNames = getSelectFiles();
+            const fileNames = getSelectedFilesFromFileListFirst();
             if (fileNames) {
                 $.ajax({
                     url: '/process_files',
