@@ -26,9 +26,14 @@ def _send_update(message: str):
 
 @celery.task(bind=True)
 def celery_train_model(self, training_files, label_files, model_name, bypass_already_trained):
+    def callback_fn(msg):
+        if not hasattr(self, 'error_reported') or not self.error_reported:
+            _send_update(msg)
     try:
         from app import app
         with app.app_context():
+            print(f"Training model {model_name} with files: {training_files}")
+            print(f"Training model {model_name} with labels: {label_files}")
             pdf_dfs_data_training = []
             for fname in training_files:
                 csv_path = os.path.join('uploads', fname)
@@ -41,9 +46,6 @@ def celery_train_model(self, training_files, label_files, model_name, bypass_alr
                 if os.path.exists(csv_path):
                     df = pd.read_csv(csv_path)
                     pdf_dfs_data_label.append(df)
-            def callback_fn(msg):
-                if not hasattr(self, 'error_reported') or not self.error_reported:
-                    _send_update(msg)
             error = modelClass.train(pdf_dfs_data_training, pdf_dfs_data_label, model_name, update_callback=callback_fn, bypass_already_trained=bypass_already_trained)
             if error == ModelLoadStatus.SUCCESS:
                 _send_update("Training completed.")

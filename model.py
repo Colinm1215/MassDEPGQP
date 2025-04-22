@@ -5,7 +5,8 @@ from datetime import datetime
 import spacy
 from spacy.pipeline import EntityRuler
 from enum import Enum
-from transformers import T5ForConditionalGeneration, T5Tokenizer, RobertaForSequenceClassification, RobertaTokenizer
+from transformers import T5ForConditionalGeneration, T5Tokenizer, RobertaForSequenceClassification, RobertaTokenizer, \
+    AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import pandas as pd
 from werkzeug.utils import secure_filename
@@ -13,6 +14,8 @@ from database import db, ModelSystem, ModelStatus, LLMModel, TrainStatus, NamedE
 import torch
 from torch.optim import Adam
 from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
+
+from pdfScript import get_clean_dataframe
 
 
 # ModelLoadStatus defines possible outcomes for model loading/training
@@ -36,23 +39,74 @@ class PDFStandardizer:
     def __init__(self):
         if not os.path.exists("models"):
             os.makedirs("models")
-        self.nlp = spacy.load("en_core_web_sm")
-        self.t5_model = T5ForConditionalGeneration.from_pretrained("t5-small")
-        self.t5_tokenizer = T5Tokenizer.from_pretrained("t5-small")
-        self.discriminator = RobertaForSequenceClassification.from_pretrained("roberta-base")
-        self.discriminator_tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+        self.nlp = spacy.load("en_core_web_trf")
+        self.t5_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large")
+        self.t5_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
+        self.discriminator = AutoModelForSequenceClassification.from_pretrained("facebook/bart-large-mnli")
+        self.discriminator_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-mnli")
         # Place models on device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.t5_model.to(self.device)
         self.discriminator.to(self.device)
         ruler = self.nlp.add_pipe("entity_ruler", before="ner")
 
-        # Example patterns
         patterns = [
-            {"label": "SOIL_TYPE", "pattern": [{"LOWER": "soil"}, {"LOWER": "type"}, {"IS_PUNCT": True, "OP": "?"}, {"LOWER": "sandy", "OP": "?"}, {"LOWER": "loam", "OP": "?"}]},
-            {"label": "ORDER_NUMBER", "pattern": [{"LOWER": "order"}, {"IS_PUNCT": True, "OP": "?"}, {"LOWER": "#", "OP": "?"}, {"IS_ALPHA": False, "OP": "+"}]},
-            {"label": "TEST_RESULT", "pattern": "Contamination Test: Passed"}
-            # etc.
+            {"label": "SOIL_TYPE",
+             "pattern": [
+                 {"LOWER": "soil"}, {"LOWER": "type"}, {"IS_PUNCT": True, "OP": "?"},
+                 {"LOWER": {"IN": ["sandy", "clay", "loam", "silt", "gravel"]}, "OP": "+"}
+             ]},
+            {"label": "ORDER_NUMBER",
+             "pattern": [
+                 {"LOWER": "order"}, {"IS_PUNCT": True, "OP": "?"},
+                 {"LOWER": "#", "OP": "?"}, {"TEXT": {"REGEX": r"[A-Za-z0-9\-]+"}, "OP": "+"}
+             ]},
+            {"label": "TEST_RESULT",
+             "pattern": [
+                 {"LOWER": "test"}, {"TEXT": ":", "OP": "?"},
+                 {"TEXT": {"REGEX": r".+"}},
+             ]},
+
+            {"label": "DATE",
+             "pattern": [{"TEXT": {"REGEX": r"\b(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])/\d{4}\b"}}]},
+
+            {"label": "SOURCE_LOCATION",
+             "pattern": [
+                 {"LOWER": "source"}, {"LOWER": "location"}, {"TEXT": ":", "OP": "?"},
+                 {"TEXT": {"REGEX": r".+"}},
+             ]},
+
+            {"label": "DESTINATION",
+             "pattern": [
+                 {"LOWER": "destination"}, {"TEXT": ":", "OP": "?"},
+                 {"TEXT": {"REGEX": r".+"}},
+             ]},
+
+            {"label": "ADDRESS",
+             "pattern": [
+                 {"LIKE_NUM": True}, {"IS_ALPHA": True, "OP": "+"},
+                 {"LOWER": {"IN": ["ave", "street", "road", "blvd", "drive", "lane"]}, "OP": "?"}
+             ]},
+
+            {"label": "VOLUME",
+             "pattern": [
+                 {"LIKE_NUM": True}, {"LOWER": {"IN": ["cubic", "cu"]}}, {"LOWER": {"IN": ["yard", "yards"]}}
+             ]},
+
+            {"label": "SAFETY_STATUS",
+             "pattern": [
+                 {"LOWER": "safety"}, {"LOWER": "status"}, {"TEXT": ":", "OP": "?"},
+                 {"TEXT": {"REGEX": r".+"}}
+             ]},
+
+            {"label": "SPECIAL_HANDLING",
+             "pattern": [
+                 {"LOWER": "special"}, {"LOWER": "handling"}, {"TEXT": ":", "OP": "?"},
+                 {"TEXT": {"REGEX": r".+"}}
+             ]},
+
+            {"label": "PHONE_NUMBER",
+             "pattern": [{"TEXT": {"REGEX": r"\(\d{3}\)\s*\d{3}-\d{4}"}}]},
         ]
         ruler.add_patterns(patterns)
 
@@ -60,15 +114,20 @@ class PDFStandardizer:
                   epochs=3, batch_size=4, lr=5e-5, update_callback=None):
         """
         Fine tune the T5 model using training_data and label_data.
-        Optionally, entity_data can be concatenated to the input for context.
+        entity_data is concatenated to the input for context.
         The blank_format is used as a prompt template.
         """
+        # Debug: starting training
+        if update_callback:
+            update_callback(
+                f"[DEBUG] Starting fine_tune for model '{model_name}' with epochs={epochs}, batch_size={batch_size}, lr={lr}")
         optimizer = Adam(self.t5_model.parameters(), lr=lr)
         ce_loss = CrossEntropyLoss(ignore_index=self.t5_tokenizer.pad_token_id)
         bce_loss = BCEWithLogitsLoss()
 
-        # Assume training_data and label_data are lists of strings of equal length
         dataset_size = len(training_data)
+        if update_callback:
+            update_callback(f"[DEBUG] Dataset size: {dataset_size}")
         self.t5_model.train()
         self.discriminator.train()
 
@@ -76,87 +135,124 @@ class PDFStandardizer:
         last_gen_loss = None
         last_disc_loss = None
 
-        # Training loop
         for epoch in range(epochs):
-            epoch_losses = []
             if update_callback:
-                update_callback(f"Epoch {epoch + 1}/{epochs} started.")
+                update_callback(f"[DEBUG] Epoch {epoch + 1}/{epochs} started.")
+            epoch_losses = []
+
             for i in range(0, dataset_size, batch_size):
-                batch_inputs = []
-                batch_labels = []
-                for j in range(i, min(i + batch_size, dataset_size)):
-                    # Optionally include entity data in the prompt
-                    entity_info = ""
-                    if entity_data:
-                        entity_info = " | Entities: " + str(entity_data[j])
-                    # Construct the input prompt
+                batch_num = i // batch_size + 1
+                start_idx = i
+                end_idx = min(i + batch_size, dataset_size)
+                if update_callback:
+                    update_callback(f"[DEBUG] Processing batch {batch_num}: samples {start_idx} to {end_idx - 1}")
+
+                # Prepare prompts and labels
+                batch_inputs, batch_labels = [], []
+                for j in range(start_idx, end_idx):
+                    entity_info = f" | Entities: {entity_data[j]}" if entity_data else ""
                     prompt = (
-                        f"Output Format: {standard_format} "
-                        f"and Named Entities: {entity_info} "
-                        f"with Input: {training_data[j]}. "
-                        "If any factual information is missing, output '{CANNOT FIND}' in its place.")
+                        f"""
+                        You are a data standardization expert. Your task is to standardize the following text:
+                        {training_data[j]}
+                        standardize the text according to the following format:
+                        {standard_format}
+                        and make sure that the following named entities and any other relevant factual information are included:
+                        {entity_info}
+                        """
+                    )
                     batch_inputs.append(prompt)
                     batch_labels.append(label_data[j])
 
-                # Tokenize inputs and labels
+                # Tokenization
+                if update_callback:
+                    update_callback(f"[DEBUG] Tokenizing batch {batch_num}")
                 input_encodings = self.t5_tokenizer(batch_inputs, return_tensors="pt",
                                                     padding=True, truncation=True, max_length=512)
                 label_encodings = self.t5_tokenizer(batch_labels, return_tensors="pt",
                                                     padding=True, truncation=True, max_length=512)
+
                 input_ids = input_encodings.input_ids.to(self.device)
                 attention_mask = input_encodings.attention_mask.to(self.device)
                 labels = label_encodings.input_ids.to(self.device)
 
-                # Forward pass through T5
+                # Generator forward pass
                 outputs = self.t5_model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                gen_loss = outputs.loss  # CrossEntropyLoss computed internally
+                gen_loss = outputs.loss
+                last_gen_loss = gen_loss.item()
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} gen_loss: {last_gen_loss:.4f}")
 
-                # Generate output for discriminator loss computation
+                # Generation step
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} starting generate() call")
                 with torch.no_grad():
-                    generated_ids = self.t5_model.generate(input_ids=input_ids,
-                                                           attention_mask=attention_mask,
-                                                           max_length=512)
-                generated_texts = [self.t5_tokenizer.decode(g, skip_special_tokens=True) for g in generated_ids]
+                    generated_ids = self.t5_model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_length=128,
+                        num_beams=2,
+                        early_stopping=True,
+                        no_repeat_ngram_size=2
+                    )
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} generate() completed")
 
-                # Use discriminator to check consistency
-                disc_inputs = self.discriminator_tokenizer(training_data[i:i + batch_size],
-                                                           generated_texts,
-                                                           return_tensors="pt",
-                                                           padding=True, truncation=True, max_length=512)
+                generated_texts = [self.t5_tokenizer.decode(g, skip_special_tokens=True) for g in generated_ids]
+                sample_text = generated_texts[0] if generated_texts else 'N/A'
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} sample generated text: {sample_text}")
+
+                # Discriminator input
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} preparing discriminator inputs")
+                disc_inputs = self.discriminator_tokenizer(
+                    training_data[start_idx:end_idx],
+                    generated_texts,
+                    return_tensors="pt",
+                    padding=True, truncation=True, max_length=512
+                )
                 disc_inputs = {k: v.to(self.device) for k, v in disc_inputs.items()}
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} discriminator tokenization completed")
+
                 disc_outputs = self.discriminator(**disc_inputs)
-                # Assume target consistency score is 1 (perfect match) for all examples
                 target = torch.ones(disc_outputs.logits.shape, device=self.device)
                 disc_loss = bce_loss(disc_outputs.logits, target)
+                last_disc_loss = disc_loss.item()
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} disc_loss: {last_disc_loss:.4f}")
 
-                # Total loss: weighted sum of generation loss and discriminator loss
-                total_loss = gen_loss + 0.5 * disc_loss  # weight can be tuned
+                # Total loss and backward
+                total_loss = gen_loss + 0.5 * disc_loss
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} total_loss: {total_loss.item():.4f}")
 
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
+                if update_callback:
+                    update_callback(f"[DEBUG] Batch {batch_num} optimizer.step() completed")
 
                 epoch_losses.append(total_loss.item())
-                last_gen_loss = gen_loss.item()
-                last_disc_loss = disc_loss.item()
-
                 if update_callback:
-                    update_callback(
-                        f"Batch {i // batch_size + 1}: gen_loss={last_gen_loss:.4f}, disc_loss={last_disc_loss:.4f}")
+                    update_callback(f"Batch {batch_num}: gen_loss={last_gen_loss:.4f}, disc_loss={last_disc_loss:.4f}")
 
-            loss_history.append({
-                "epoch": epoch + 1,
-                "average_loss": sum(epoch_losses) / len(epoch_losses),
-                "batch_losses": epoch_losses
-            })
+            # Epoch summary
+            avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
+            loss_history.append({"epoch": epoch + 1, "average_loss": avg_loss, "batch_losses": epoch_losses})
+            if update_callback:
+                update_callback(f"[DEBUG] Epoch {epoch + 1} completed. Average loss: {avg_loss:.4f}")
 
-        generator_weights_path = f"models/{model_name}_finetuned.pt"
-        discriminator_weights_path = f"models/{model_name}_finetuned.pt"
+        # Save models
+        generator_weights_path = f"models/{model_name}_finetuned_generator.pt"
+        discriminator_weights_path = f"models/{model_name}_finetuned_discriminator.pt"
         self.t5_model.save_pretrained(generator_weights_path)
         self.discriminator.save_pretrained(discriminator_weights_path)
 
-        # After training, update the model record status if using DB (omitted here for brevity)
         if update_callback:
+            update_callback(
+                f"[DEBUG] Fine-tuning completed. Final gen_loss: {last_gen_loss:.4f}, disc_loss: {last_disc_loss:.4f}")
             update_callback("Fine-tuning completed.")
         return {
             "final_loss": total_loss.item(),
@@ -164,16 +260,12 @@ class PDFStandardizer:
             "discriminator_loss": last_disc_loss,
             "epochs": epochs,
             "loss_history": loss_history,
-            "hyperparameters": {
-                "learning_rate": lr,
-                "batch_size": batch_size,
-                "epochs": epochs
-            },
+            "hyperparameters": {"learning_rate": lr, "batch_size": batch_size, "epochs": epochs},
             "training_status": "trained",
             "generator_weights_path": generator_weights_path,
             "discriminator_weights_path": discriminator_weights_path,
             "training_data": training_data,
-            "named_entities": entity_data if entity_data else []
+            "named_entities": entity_data or []
         }
 
     def extract_entities(self, text, update_callback):
@@ -181,39 +273,19 @@ class PDFStandardizer:
         all_entities = []
 
         for ent in doc.ents:
-            all_entities.append({"entity": ent.text, "type": ent.label_})
+            all_entities.append({
+                "entity_type": ent.label_,
+                "entity_value": ent.text
+            })
+
         if update_callback:
-            update_callback("Extracting entities...")
-            update_callback(f"Entities found: {len(all_entities)}")
-            update_callback(f"Entities: {all_entities}")
+            update_callback(f"Extracted {len(all_entities)} entities: {all_entities}")
+
         return all_entities
 
-    def generate_standardized_report(self, text, max_input_length=512, chunk_overlap=0):
-        prefix = "standardize: "
-        prefix_ids = self.t5_tokenizer.encode(prefix, add_special_tokens=False)
-        text_ids = self.t5_tokenizer.encode(text, add_special_tokens=False)
-        available_length = max_input_length - len(prefix_ids)
-        if available_length <= 0:
-            raise ValueError("max_input_length is too small to accommodate the prefix.")
-        chunks = []
-        start = 0
-        while start < len(text_ids):
-            end = start + available_length
-            chunks.append(text_ids[start:end])
-            start = end - chunk_overlap if end < len(text_ids) else end
-        output_chunks = []
-        for chunk in chunks:
-            combined_ids = prefix_ids + chunk
-            input_ids = self.t5_tokenizer(
-                self.t5_tokenizer.decode(combined_ids, skip_special_tokens=True),
-                return_tensors="pt",
-                truncation=True,
-                max_length=max_input_length
-            )["input_ids"]
-            output_ids = self.t5_model.generate(input_ids)
-            output_text = self.t5_tokenizer.decode(output_ids[0], skip_special_tokens=True)
-            output_chunks.append(output_text)
-        return "\n".join(output_chunks)
+    def generate_standardized_report(self, text, format, update_callback=None):
+        update_callback(f"Generating standardized report for text: {text}")
+        return ""
 
     def validate_report(self, original_text, generated_text):
         inputs = self.discriminator_tokenizer(original_text, generated_text, return_tensors="pt", padding=True, truncation=True)
@@ -250,10 +322,6 @@ class PDFStandardizer:
         for df_index, df in enumerate(pdf_dfs_label):
             for text in df["Text"]:
                 label_data.append(text)
-                extracted_entities = self.extract_entities(text, update_callback)
-                for entity in extracted_entities:
-                    if entity not in entity_data:
-                        entity_data.append(entity)
 
         fine_tune_result = self.fine_tune(
             model_name=model_name,
@@ -263,6 +331,9 @@ class PDFStandardizer:
             entity_data=entity_data,
             update_callback=update_callback
         )
+
+        if update_callback:
+            update_callback(f"Training info for {model_name}: {fine_tune_result}")
 
         # Update the model record in the DB to mark it as TRAINED.
         record = ModelSystem.query.filter_by(name=model_name).first()
@@ -295,9 +366,16 @@ class PDFStandardizer:
         db.session.add(discriminator_llm)
 
         # Update Named Entities.
-        # For each entity (if fine_tune_result returns a list of dicts with entity_type and entity_value),
-        # add a new record to the NamedEntity table.
-        for entity in fine_tune_result.get("named_entities", []):
+        nested = fine_tune_result.get("named_entities", [])
+        flat_entities = []
+        for item in nested:
+            if isinstance(item, dict):
+                flat_entities.append(item)
+                update_callback(f"Extracted entity as list somehow: {item}")
+            elif isinstance(item, list):
+                flat_entities.extend([e for e in item if isinstance(e, dict)])
+
+        for entity in flat_entities:
             new_entity = NamedEntity(
                 model_system_id=record.id,
                 entity_type=entity.get("entity_type"),
@@ -305,12 +383,20 @@ class PDFStandardizer:
             )
             db.session.add(new_entity)
 
-        # Update the TrainingData table if you have metadata (e.g., file names, file paths, processed_at)
-        # For example, if you have a list of dictionaries with this info, iterate and add them.
+        # Update the TrainingData table
         for file in pdf_dfs_training:
-            file_name = file["filename"] if "filename" in file.columns else "unknown"
+            file_name = str(file["filename"].iloc[0]) if "filename" in file.columns else "unknown"
             file_path = f"uploads/{file_name}"
             processed_at = datetime.utcnow()
+
+            if update_callback:
+                update_callback(f"""
+                Training Data to Save :
+                model_system_id={record.id},
+                file_name={file_name},
+                file_path={file_path},
+                processed_at={processed_at}
+                """)
 
             new_td = TrainingData(
                 model_system_id=record.id,
@@ -321,9 +407,18 @@ class PDFStandardizer:
             db.session.add(new_td)
 
         for file in pdf_dfs_label:
-            file_name = file["filename"] if "filename" in file.columns else "unknown"
+            file_name = str(file["filename"].iloc[0]) if "filename" in file.columns else "unknown"
             file_path = f"uploads/{file_name}"
             processed_at = datetime.utcnow()
+
+            if update_callback:
+                update_callback(f"""
+                Label Data to Save :
+                model_system_id={record.id},
+                file_name={file_name},
+                file_path={file_path},
+                processed_at={processed_at}
+                """)
 
             new_td = TrainingData(
                 model_system_id=record.id,
@@ -337,7 +432,7 @@ class PDFStandardizer:
 
         if update_callback:
             update_callback(f"Training completed. Model {model_name} is now TRAINED.")
-        return ModelStatus.TRAINED.value
+        return ModelLoadStatus.SUCCESS
 
     def process_pdfs(self, pdf_dfs, model_name, update_callback=None):
         status = self.load_model(model_name)
@@ -365,6 +460,9 @@ class PDFStandardizer:
                     "confidence": validated_score
                 })
             reports.append(pd.DataFrame(standardized_report))
+            output_dir = os.path.join("processed", model_name)
+            os.makedirs(output_dir, exist_ok=True)
+            reports[-1].to_csv(os.path.join(output_dir, f"{df['filename'].iloc[0]}.csv"), index=False)
         if update_callback:
             update_callback("Processing completed. Standardized data saved.")
         return ModelLoadStatus.SUCCESS, reports

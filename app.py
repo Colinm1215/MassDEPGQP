@@ -211,9 +211,11 @@ def model_validation(model_name):
 def train_model():
     data = request.get_json()
     primary_files = data.get("primary_files", [])
+    print(primary_files)
     if not primary_files:
         return jsonify({"error": "No training files provided"}), 400
     secondary_files = data.get("secondary_files", [])
+    print(secondary_files)
     if not secondary_files:
         return jsonify({"error": "No standardized files provided"}), 400
     model_name = data.get('model_name')
@@ -229,7 +231,7 @@ def process_files():
     data = request.get_json()
     file_names = data.get('files')
     model_name = data.get('model_name')
-    valid = model_validation(model_name, file_names)
+    valid = model_validation(model_name)
     if valid:
         return valid
     task = celery_process_files.delay(file_names, model_name)
