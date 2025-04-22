@@ -44,10 +44,10 @@ class PDFStandardizer:
         self.t5_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
         self.discriminator = AutoModelForSequenceClassification.from_pretrained("facebook/bart-large-mnli")
         self.discriminator_tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-mnli")
-        # Place models on device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.t5_model.to(self.device)
         self.discriminator.to(self.device)
+        self.standard_format = ""
         ruler = self.nlp.add_pipe("entity_ruler", before="ner")
 
         patterns = [
@@ -113,11 +113,10 @@ class PDFStandardizer:
     def fine_tune(self, model_name, training_data, label_data, standard_format, entity_data=None,
                   epochs=3, batch_size=4, lr=5e-5, update_callback=None):
         """
-        Fine tune the T5 model using training_data and label_data.
+        Fine tune the model using training_data and label_data.
         entity_data is concatenated to the input for context.
-        The blank_format is used as a prompt template.
+        The standard_format is used as a prompt template.
         """
-        # Debug: starting training
         if update_callback:
             update_callback(
                 f"[DEBUG] Starting fine_tune for model '{model_name}' with epochs={epochs}, batch_size={batch_size}, lr={lr}")
@@ -145,12 +144,12 @@ class PDFStandardizer:
                 start_idx = i
                 end_idx = min(i + batch_size, dataset_size)
                 if update_callback:
-                    update_callback(f"[DEBUG] Processing batch {batch_num}: samples {start_idx} to {end_idx - 1}")
+                    update_callback(f"[DEBUG] Processing batch {batch_num}: samples {start_idx+1} to {end_idx+1}")
 
                 # Prepare prompts and labels
                 batch_inputs, batch_labels = [], []
                 for j in range(start_idx, end_idx):
-                    entity_info = f" | Entities: {entity_data[j]}" if entity_data else ""
+                    entity_info = f"Entities: {entity_data[j]}" if entity_data else ""
                     prompt = (
                         f"""
                         You are a data standardization expert. Your task is to standardize the following text:
@@ -231,8 +230,6 @@ class PDFStandardizer:
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} optimizer.step() completed")
 
                 epoch_losses.append(total_loss.item())
                 if update_callback:
@@ -265,7 +262,8 @@ class PDFStandardizer:
             "generator_weights_path": generator_weights_path,
             "discriminator_weights_path": discriminator_weights_path,
             "training_data": training_data,
-            "named_entities": entity_data or []
+            "named_entities": entity_data or [],
+            "standard_format": standard_format
         }
 
     def extract_entities(self, text, update_callback):
@@ -283,25 +281,78 @@ class PDFStandardizer:
 
         return all_entities
 
-    def generate_standardized_report(self, text, format, update_callback=None):
-        update_callback(f"Generating standardized report for text: {text}")
-        return ""
+    def generate_standardized_report(self, text, update_callback=None):
+        entities = self.extract_entities(text, update_callback=None)
+        entity_info = f"Entities: {json.dumps(entities)}" if entities else ""
+
+        prompt = (
+            f"""
+            You are a data standardization expert. Your task is to standardize the following text:
+            {text}
+            standardize the text according to the following format:
+            {self.standard_format}
+            and make sure that the following named entities and any other relevant factual information are included:
+            {entity_info}
+            """
+        )
+
+        input_encodings = self.t5_tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        input_ids = input_encodings.input_ids.to(self.device)
+        attention_mask = input_encodings.attention_mask.to(self.device)
+
+        generated_ids = self.t5_model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_length=128,
+            num_beams=2,
+            early_stopping=True,
+            no_repeat_ngram_size=2
+        )
+
+        return self.t5_tokenizer.decode(generated_ids[0], skip_special_tokens=True)
 
     def validate_report(self, original_text, generated_text):
+        from torch.nn.functional import softmax
         inputs = self.discriminator_tokenizer(original_text, generated_text, return_tensors="pt", padding=True, truncation=True)
         outputs = self.discriminator(**inputs)
-        return torch.sigmoid(outputs.logits).tolist()
+        return softmax(outputs.logits, dim=-1)[:, 2]
 
-    def load_model(self, model_name):
-        # Instead of file‑based loading, we query the DB for the model record.
+    def load_model(self, model_name, update_callback=None):
         record = ModelSystem.query.filter_by(name=model_name).first()
         if not record:
             return ModelLoadStatus.NOT_FOUND
         if record.status == ModelStatus.UNTRAINED.value:
             return ModelLoadStatus.UNTRAINED
+
+        self.standard_format = record.standard_format
+
+        generator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="generator").first()
+        discriminator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="discriminator").first()
+
+        try:
+            if generator_llm and generator_llm.weights_path and os.path.exists(generator_llm.weights_path):
+                self.t5_model = AutoModelForSeq2SeqLM.from_pretrained(generator_llm.weights_path)
+                self.t5_model.to(self.device)
+            else:
+                if update_callback:
+                    update_callback(f"[ERROR] could not load weights for {model_name}")
+                return ModelLoadStatus.ERROR
+
+            if discriminator_llm and discriminator_llm.weights_path and os.path.exists(discriminator_llm.weights_path):
+                self.discriminator = AutoModelForSequenceClassification.from_pretrained(discriminator_llm.weights_path)
+                self.discriminator.to(self.device)
+            else:
+                if update_callback:
+                    update_callback(f"[ERROR] could not load weights for {model_name}")
+                return ModelLoadStatus.ERROR
+        except Exception as e:
+            if update_callback:
+                update_callback(f"[ERROR] : {e}")
+            return ModelLoadStatus.ERROR
+
         return ModelLoadStatus.SUCCESS
 
-    def train(self, pdf_dfs_training, pdf_dfs_label, model_name, update_callback=None, bypass_already_trained=False, standard_format = ""):
+    def train(self, pdf_dfs_training, pdf_dfs_label, model_name, update_callback=None, bypass_already_trained=False, standard_format=""):
         status = self.load_model(model_name)
         if status == ModelLoadStatus.SUCCESS and not bypass_already_trained:
             if update_callback:
@@ -344,6 +395,7 @@ class PDFStandardizer:
         # Save the training configuration and history as JSON strings.
         record.train_config = json.dumps(fine_tune_result["hyperparameters"])
         record.train_history = json.dumps(fine_tune_result["loss_history"])
+        record.standard_format = fine_tune_result["standard_format"]
 
         # Update or create the generator LLM record.
         generator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="generator").first()
@@ -434,7 +486,7 @@ class PDFStandardizer:
             update_callback(f"Training completed. Model {model_name} is now TRAINED.")
         return ModelLoadStatus.SUCCESS
 
-    def process_pdfs(self, pdf_dfs, model_name, update_callback=None):
+    def process_pdfs(self, pdf_dfs, model_name, update_callback=None, num_tries=3):
         status = self.load_model(model_name)
         if status != ModelLoadStatus.SUCCESS:
             if update_callback:
@@ -442,16 +494,31 @@ class PDFStandardizer:
             return status, None
         if update_callback:
             update_callback(f"Processing started for files using {model_name}...")
+
         reports = []
         for df_index, df in enumerate(pdf_dfs):
             standardized_report = []
             if update_callback:
-                update_callback(f"Processing PDF {df_index+1} of {len(pdf_dfs)}...")
+                update_callback(f"Processing file {df_index+1} of {len(pdf_dfs)}...")
+
             for text_index, text in enumerate(df["Text"]):
-                if update_callback:
-                    update_callback(f"Processing page {text_index+1}...")
-                standardized_text = self.generate_standardized_report(text)
-                validated_score = self.validate_report(text, standardized_text)
+                cur_try = 0
+                standardized_text = ""
+                validated_score = 0
+
+                while validated_score < 0.5:
+                    if update_callback:
+                        update_callback(f"Processing page {text_index+1}, attempt {cur_try+1}")
+                    standardized_text = self.generate_standardized_report(text, update_callback)
+                    validated_score = self.validate_report(text, standardized_text).item()
+                    if update_callback:
+                        update_callback(f"Page {text_index+1} processed with confidence {validated_score}")
+                    if cur_try == num_tries-1:
+                        if update_callback:
+                            update_callback("Maximum number of generation attempts reach, continuing...")
+                        break
+                    cur_try += 1
+
                 standardized_report.append({
                     "filename": df["filename"].iloc[0],
                     "page_number": df["Page"].iloc[text_index],
@@ -459,10 +526,19 @@ class PDFStandardizer:
                     "standardized_text": standardized_text,
                     "confidence": validated_score
                 })
-            reports.append(pd.DataFrame(standardized_report))
-            output_dir = os.path.join("processed", model_name)
-            os.makedirs(output_dir, exist_ok=True)
-            reports[-1].to_csv(os.path.join(output_dir, f"{df['filename'].iloc[0]}.csv"), index=False)
+            new_report_df = pd.DataFrame(standardized_report)
+            reports.append(new_report_df)
+            if update_callback:
+                update_callback(f"Finished Processing file {df_index+1} of {len(pdf_dfs)}")
+
+        output_dir = f"processed/{model_name}"
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+
+        for report in reports:
+            filename = report["filename"].iloc[0]
+            report.to_csv(f'{output_dir}/{filename}_Standardized.csv', index=False)
+
         if update_callback:
-            update_callback("Processing completed. Standardized data saved.")
+            update_callback("Processing completed. Saving data...")
         return ModelLoadStatus.SUCCESS, reports
