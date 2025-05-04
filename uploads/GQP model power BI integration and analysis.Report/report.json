@@ -1,0 +1,81 @@
+{
+  "config": "{\"version\":\"5.59\",\"themeCollection\":{\"baseTheme\":{\"name\":\"CY24SU10\",\"version\":\"5.62\",\"type\":2}},\"activeSectionIndex\":0,\"defaultDrillFilterOtherVisuals\":true,\"slowDataSourceSettings\":{\"isCrossHighlightingDisabled\":false,\"isSlicerSelectionsButtonEnabled\":false,\"isFilterSelectionsButtonEnabled\":false,\"isFieldWellButtonEnabled\":false,\"isApplyAllButtonEnabled\":false},\"linguisticSchemaSyncVersion\":2,\"settings\":{\"useNewFilterPaneExperience\":true,\"allowChangeFilterTypes\":true,\"useStylableVisualContainerHeader\":true,\"queryLimitOption\":6,\"exportDataMode\":1,\"useDefaultAggregateDisplayName\":true,\"useEnhancedTooltips\":true},\"objects\":{\"section\":[{\"properties\":{\"verticalAlignment\":{\"expr\":{\"Literal\":{\"Value\":\"'Top'\"}}}}}],\"outspacePane\":[{\"properties\":{\"expanded\":{\"expr\":{\"Literal\":{\"Value\":\"false\"}}}}}]}}",
+  "layoutOptimization": 0,
+  "resourcePackages": [
+    {
+      "resourcePackage": {
+        "disabled": false,
+        "items": [
+          {
+            "name": "CY24SU10",
+            "path": "BaseThemes/CY24SU10.json",
+            "type": 202
+          }
+        ],
+        "name": "SharedResources",
+        "type": 2
+      }
+    }
+  ],
+  "sections": [
+    {
+      "config": "{}",
+      "displayName": "Page 2",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.00,
+      "name": "5a6c82c0e49280e03530",
+      "visualContainers": [
+        {
+          "config": "{\"name\":\"9d24cb9726e3e17e1301\",\"layouts\":[{\"id\":0,\"position\":{\"x\":0,\"y\":0,\"z\":0,\"width\":1280,\"height\":720,\"tabOrder\":0}}],\"singleVisual\":{\"visualType\":\"pythonVisual\",\"projections\":{\"Values\":[{\"queryRef\":\"GQP.Corrected_Text\"},{\"queryRef\":\"GQP.Page\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"g\",\"Entity\":\"GQP\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"g\"}},\"Property\":\"Corrected_Text\"},\"Name\":\"GQP.Corrected_Text\",\"NativeReferenceName\":\"Corrected_Text\"},{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"g\"}},\"Property\":\"Page\"},\"Name\":\"GQP.Page\",\"NativeReferenceName\":\"Page\"}]},\"queryOptions\":{\"keepProjectionOrder\":true},\"showAllRoles\":[\"Values\"],\"drillFilterOtherVisuals\":true,\"hasDefaultSort\":true,\"objects\":{\"script\":[{\"properties\":{\"source\":{\"expr\":{\"Literal\":{\"Value\":\"'import pandas as pd\\nimport matplotlib.pyplot as plt\\n\\n# Copy the dataset from Power BI\\ndf = dataset.copy()\\n\\n# Assign readability status\\ndf[''Readability Status''] = df.apply(\\n    lambda row: ''Failed'' if pd.isnull(row[''Corrected_Text'']) or ''No readable text'' in str(row[''Corrected_Text'']) else ''Succeeded'',\\n    axis=1\\n)\\n\\n# Get status counts\\nstatus_summary = df[''Readability Status''].value_counts()\\n\\n# Define custom colors\\ncolors = [''green'', ''red'']  # Succeeded = green, Failed = red\\n\\n# Custom autopct function\\ndef func(pct, allvalues):\\n    absolute = round(pct / 100.*sum(allvalues), 0)\\n    return f\\\"{int(absolute)} pages ({pct:.1f}%)\\\"\\n\\n# Plot the pie chart\\nplt.figure(figsize=(9, 9))\\nwedges, texts, autotexts = plt.pie(\\n    status_summary,\\n    labels=status_summary.index,\\n    autopct=lambda pct: func(pct, status_summary),\\n    colors=colors[:len(status_summary)],\\n    textprops={''fontsize'': 16}\\n)\\n\\n# Adjust font size of the \\\"Failed\\\" label and its percentage text\\nfor label, autotext in zip(status_summary.index, autotexts):\\n    if label == ''Failed'':\\n        autotext.set_fontsize(12)  # Make \\\"Failed\\\" text smaller\\n    else:\\n        autotext.set_fontsize(18)\\n\\n# Title\\nplt.title(\\\"Readability Status of Pages Processed by Model\\\", fontsize=16)\\nplt.axis(''equal'')\\nplt.tight_layout()\\nplt.show()\\n\\n\\n\\n'\"}}},\"provider\":{\"expr\":{\"Literal\":{\"Value\":\"'Python'\"}}}}}]},\"vcObjects\":{\"title\":[{\"properties\":{\"bold\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}},\"text\":{\"expr\":{\"Literal\":{\"Value\":\"'Corrected_Text and Page'\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 720.00,
+          "width": 1280.00,
+          "x": 0.00,
+          "y": 0.00,
+          "z": 0.00
+        }
+      ],
+      "width": 1280.00
+    },
+    {
+      "config": "{}",
+      "displayName": "Page 1",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.00,
+      "name": "93705e68a6cbd7335e8b",
+      "ordinal": 1,
+      "visualContainers": [
+        {
+          "config": "{\"name\":\"30625d12b0d52e1643a4\",\"layouts\":[{\"id\":0,\"position\":{\"x\":0,\"y\":0,\"z\":1000,\"width\":1280,\"height\":108.57142857142858,\"tabOrder\":1000}}],\"singleVisual\":{\"visualType\":\"slicer\",\"projections\":{\"Values\":[{\"queryRef\":\"Table.PageInput\",\"active\":true}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"t\",\"Entity\":\"Table\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"t\"}},\"Property\":\"PageInput\"},\"Name\":\"Table.PageInput\",\"NativeReferenceName\":\"PageInput\"}]},\"drillFilterOtherVisuals\":true,\"objects\":{\"data\":[{\"properties\":{\"mode\":{\"expr\":{\"Literal\":{\"Value\":\"'Dropdown'\"}}}}}],\"selection\":[{\"properties\":{\"strictSingleSelect\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}}}}],\"general\":[{\"properties\":{\"filter\":{\"filter\":{\"Version\":2,\"From\":[{\"Name\":\"t\",\"Entity\":\"Table\",\"Type\":0}],\"Where\":[{\"Condition\":{\"In\":{\"Expressions\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"t\"}},\"Property\":\"PageInput\"}}],\"Values\":[[{\"Literal\":{\"Value\":\"25L\"}}]]}}}]}}}}],\"header\":[{\"properties\":{\"text\":{\"expr\":{\"Literal\":{\"Value\":\"''\"}}}}}]},\"vcObjects\":{\"title\":[{\"properties\":{\"show\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}},\"text\":{\"expr\":{\"Literal\":{\"Value\":\"'Select a page number'\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 108.57,
+          "width": 1280.00,
+          "x": 0.00,
+          "y": 0.00,
+          "z": 1000.00
+        },
+        {
+          "config": "{\"name\":\"7847a883bb5ee07448d1\",\"layouts\":[{\"id\":0,\"position\":{\"x\":640,\"y\":108.57142857142858,\"z\":2000,\"width\":640,\"height\":600,\"tabOrder\":2000}}],\"singleVisual\":{\"visualType\":\"pythonVisual\",\"projections\":{\"Values\":[{\"queryRef\":\"Table.PageInput\"},{\"queryRef\":\"GQP.Page\"},{\"queryRef\":\"GQP.Corrected_Text\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"t\",\"Entity\":\"Table\",\"Type\":0},{\"Name\":\"g\",\"Entity\":\"GQP\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"t\"}},\"Property\":\"PageInput\"},\"Name\":\"Table.PageInput\",\"NativeReferenceName\":\"PageInput\"},{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"g\"}},\"Property\":\"Page\"},\"Name\":\"GQP.Page\",\"NativeReferenceName\":\"Page\"},{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"g\"}},\"Property\":\"Corrected_Text\"},\"Name\":\"GQP.Corrected_Text\",\"NativeReferenceName\":\"Corrected_Text\"}]},\"drillFilterOtherVisuals\":true,\"objects\":{\"script\":[{\"properties\":{\"source\":{\"expr\":{\"Literal\":{\"Value\":\"'import pandas as pd\\nimport matplotlib.pyplot as plt\\n\\n# Load dataset\\ndf = dataset.copy()\\n\\n# Get entered page\\nentered_pages = df[''PageInput''].unique()\\nentered_page = entered_pages[0] if len(entered_pages) == 1 else None\\n\\n# Prepare the figure\\nfig, ax = plt.subplots(figsize=(7, 5))\\nax.axis(''off'')\\n\\nif entered_page is None:\\n    ax.text(0.5, 0.5, \\\"Please select a single page number\\\",\\n            fontsize=16, ha=''center'', va=''center'', color=''gray'')\\nelse:\\n    # Filter for the selected page\\n    match = df[df[''Page''] == entered_page]\\n\\n    if match.empty:\\n        ax.text(0.5, 0.5, f\\\"Page {entered_page} not found\\\",\\n                fontsize=16, ha=''center'', va=''center'', color=''gray'')\\n    else:\\n        # Get the Corrected Text\\n        corrected_text = match.iloc[0][''Corrected_Text'']\\n        display_text = \\\"No readable text found.\\\" if pd.isnull(corrected_text) or corrected_text.strip() == \\\"\\\" else corrected_text\\n\\n        # Display the text in a wrapped format\\n        ax.text(0.5, 0.5, display_text, fontsize=14, ha=''center'', va=''center'',\\n                wrap=True, color=''black'')\\n\\nplt.show()\\n\\n\\n\\n\\n\\n\\n'\"}}},\"provider\":{\"expr\":{\"Literal\":{\"Value\":\"'Python'\"}}}}}]},\"vcObjects\":{\"title\":[{\"properties\":{\"text\":{\"expr\":{\"Literal\":{\"Value\":\"''\"}}},\"bold\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}},\"fontSize\":{\"expr\":{\"Literal\":{\"Value\":\"18D\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 600.00,
+          "width": 640.00,
+          "x": 640.00,
+          "y": 108.57,
+          "z": 2000.00
+        },
+        {
+          "config": "{\"name\":\"cdbabb9cd0b762cc0350\",\"layouts\":[{\"id\":0,\"position\":{\"x\":0,\"y\":108.57142857142858,\"z\":0,\"width\":640,\"height\":611.4285714285714,\"tabOrder\":0}}],\"singleVisual\":{\"visualType\":\"pythonVisual\",\"projections\":{\"Values\":[{\"queryRef\":\"Table.PageInput\"},{\"queryRef\":\"GQP.Page\"},{\"queryRef\":\"GQP.Corrected_Text\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"t\",\"Entity\":\"Table\",\"Type\":0},{\"Name\":\"g\",\"Entity\":\"GQP\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"t\"}},\"Property\":\"PageInput\"},\"Name\":\"Table.PageInput\",\"NativeReferenceName\":\"PageInput\"},{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"g\"}},\"Property\":\"Page\"},\"Name\":\"GQP.Page\",\"NativeReferenceName\":\"Page\"},{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"g\"}},\"Property\":\"Corrected_Text\"},\"Name\":\"GQP.Corrected_Text\",\"NativeReferenceName\":\"Corrected_Text\"}]},\"drillFilterOtherVisuals\":true,\"objects\":{\"script\":[{\"properties\":{\"source\":{\"expr\":{\"Literal\":{\"Value\":\"'import pandas as pd\\nimport matplotlib.pyplot as plt\\n\\n# Load dataset\\ndf = dataset.copy()\\n\\n# Get entered page\\nentered_pages = df[''PageInput''].unique()\\nentered_page = entered_pages[0] if len(entered_pages) == 1 else None\\n\\n# Prepare the figure\\nfig, ax = plt.subplots(figsize=(6, 5))  # Slightly taller figure\\nax.axis(''off'')\\n\\nif entered_page is None:\\n    ax.text(0.5, 0.9, \\\"Page Number: None\\\", fontsize=14, ha=''center'', color=''gray'')\\n    ax.text(0.5, 0.5, \\\"Please select a single page number\\\",\\n            fontsize=16, ha=''center'', va=''center'', color=''gray'')\\nelse:\\n    # Filter for the selected page\\n    match = df[df[''Page''] == entered_page]\\n\\n    # Display page number in title\\n    ax.text(0.5, 0.95, f\\\"Page Number: {entered_page}\\\", fontsize=18, ha=''center'', color=''black'', weight=''bold'')\\n\\n    if match.empty:\\n        ax.text(0.5, 0.5, f\\\"Page {entered_page} not found\\\",\\n                fontsize=16, ha=''center'', va=''center'', color=''gray'')\\n    else:\\n        # Determine readability status\\n        status = match.iloc[0][''Corrected_Text'']\\n        if pd.isnull(status) or ''No readable text'' in str(status):\\n            label = \\\"FAILED\\\"\\n            color = \\\"#e74c3c\\\"  # Red\\n        else:\\n            label = \\\"SUCCESS\\\"\\n            color = \\\"#27ae60\\\"  # Green\\n\\n        # Draw a larger rectangle like a button (doubled height)\\n        ax.add_patch(plt.Rectangle((0.1, 0.2), 0.8, 0.6, color=color, ec=''black'', lw=2))\\n        ax.text(0.5, 0.5, label, fontsize=36, ha=''center'', va=''center'', color=''white'', weight=''bold'')\\n\\nplt.show()\\n\\n\\n\\n\\n'\"}}},\"provider\":{\"expr\":{\"Literal\":{\"Value\":\"'Python'\"}}}}}]},\"vcObjects\":{\"title\":[{\"properties\":{\"text\":{\"expr\":{\"Literal\":{\"Value\":\"''\"}}},\"bold\":{\"expr\":{\"Literal\":{\"Value\":\"true\"}}},\"fontSize\":{\"expr\":{\"Literal\":{\"Value\":\"18D\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 611.43,
+          "width": 640.00,
+          "x": 0.00,
+          "y": 108.57,
+          "z": 0.00
+        }
+      ],
+      "width": 1280.00
+    }
+  ]
+}

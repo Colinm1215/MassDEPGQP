@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "GQP model power BI integration and analysis"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "e221945a-3031-4875-95b9-aee1d505420d"
+  }
+}

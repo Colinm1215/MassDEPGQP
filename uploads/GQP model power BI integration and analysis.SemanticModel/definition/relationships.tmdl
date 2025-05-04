@@ -1,0 +1,6 @@
+relationship 21bd6dd0-1dc8-0c8d-2459-c24b40443722
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: Table.PageInput
+	toColumn: GQP.Page
+
