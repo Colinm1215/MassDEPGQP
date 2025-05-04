@@ -1,9 +1,11 @@
+import json
 import os
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 from flask_uploads import UploadSet, configure_uploads, UploadNotAllowed
 from werkzeug.utils import secure_filename
 from pdfScript import get_clean_dataframe
+from schema_utils import load_schema
 from worker import celery_train_model, celery_process_files
 import redis
 from database import db, ModelSystem, print_all_db_records
@@ -209,22 +211,46 @@ def model_validation(model_name):
 
 @app.route('/train_model', methods=['POST'])
 def train_model():
-    data = request.get_json()
-    primary_files = data.get("primary_files", [])
-    print(primary_files)
+    try:
+        primary_files   = json.loads(request.form.get('primary_files', '[]'))
+        secondary_files = json.loads(request.form.get('secondary_files', '[]'))
+    except json.JSONDecodeError:
+        return jsonify(error="Bad JSON in file lists"), 400
+
     if not primary_files:
-        return jsonify({"error": "No training files provided"}), 400
-    secondary_files = data.get("secondary_files", [])
-    print(secondary_files)
+        return jsonify(error="No training files provided"), 400
     if not secondary_files:
-        return jsonify({"error": "No standardized files provided"}), 400
-    model_name = data.get('model_name')
-    bypass_already_trained = data.get('bypass_already_trained')
+        return jsonify(error="No standardized files provided"), 400
+
+    model_name = request.form.get('model_name')
+    bypass     = request.form.get('bypass_already_trained') == 'true'
+
+    fmt_file = request.files.get('standard_format')
+    if not fmt_file or fmt_file.filename == '':
+        return jsonify(error="No standard_format file provided"), 400
+
+    filename = secure_filename(fmt_file.filename)
+    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    fmt_file.save(save_path)
+
+    try:
+        standard_format = load_schema(save_path)
+    except Exception as e:
+        return jsonify(error=f"Failed to load schema: {e}"), 500
+
     valid = model_validation(model_name)
     if valid:
         return valid
-    task = celery_train_model.delay(primary_files, secondary_files, model_name, bypass_already_trained)
-    return jsonify({"message": f"Model training started for {model_name}", "task_id": task.id}), 200
+
+    task = celery_train_model.delay(
+        primary_files,
+        secondary_files,
+        model_name,
+        bypass,
+        standard_format
+    )
+
+    return jsonify(message=f"Model training started for {model_name}",task_id=task.id), 200
 
 @app.route('/process_files', methods=['POST'])
 def process_files():

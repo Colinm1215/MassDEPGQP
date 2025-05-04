@@ -14,3 +14,6 @@ flask_cors
 werkzeug
 flask_sqlalchemy
 sentencepiece
+openpyxl
+scikit-learn
+scipy

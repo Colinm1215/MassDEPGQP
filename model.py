@@ -1,7 +1,12 @@
 import json
 import os
+import random
 from datetime import datetime
 
+from torch import softmax
+from torch.utils.data import TensorDataset, DataLoader
+
+from schema_utils import load_schema, json_to_xlsx
 import spacy
 from spacy.pipeline import EntityRuler
 from enum import Enum
@@ -12,10 +17,17 @@ import pandas as pd
 from werkzeug.utils import secure_filename
 from database import db, ModelSystem, ModelStatus, LLMModel, TrainStatus, NamedEntity, TrainingData
 import torch
-from torch.optim import Adam
+from torch.optim import AdamW
 from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
-
 from pdfScript import get_clean_dataframe
+import random, sys, time, torch
+from torch.utils.data import DataLoader, TensorDataset
+from torch.optim import AdamW
+from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
+from torch.nn.utils import clip_grad_norm_
+import jsonschema
+from torch.nn.functional import softmax
+
 
 
 # ModelLoadStatus defines possible outcomes for model loading/training
@@ -39,6 +51,9 @@ class PDFStandardizer:
     def __init__(self):
         if not os.path.exists("models"):
             os.makedirs("models")
+        if not os.path.exists("formats"):
+            os.makedirs("formats")
+
         self.nlp = spacy.load("en_core_web_trf")
         self.t5_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large")
         self.t5_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
@@ -47,7 +62,7 @@ class PDFStandardizer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.t5_model.to(self.device)
         self.discriminator.to(self.device)
-        self.standard_format = ""
+        self.standard_format = None
         ruler = self.nlp.add_pipe("entity_ruler", before="ner")
 
         patterns = [
@@ -110,160 +125,274 @@ class PDFStandardizer:
         ]
         ruler.add_patterns(patterns)
 
-    def fine_tune(self, model_name, training_data, label_data, standard_format, entity_data=None,
-                  epochs=3, batch_size=4, lr=5e-5, update_callback=None):
+    def _looks_like_json(self, txt: str) -> bool:
+        try:
+            json.loads(txt)
+            return True
+        except Exception:
+            return False
+
+
+    def fine_tune(
+        self,
+        model_name,
+        training_data,
+        label_data,
+        standard_format,
+        entity_data=None,
+        epochs: int = 3,
+        batch_size: int = 1,
+        lr: float = 1e-5,
+        update_callback=None,
+    ):
         """
-        Fine tune the model using training_data and label_data.
-        entity_data is concatenated to the input for context.
-        The standard_format is used as a prompt template.
+        Trains generator and discriminator:
+          1. Supervised cross-entropy for format learning.
+          2. Adversarial training using BART-MNLI entailment.
+
+        Signature and return interface remain unchanged.
         """
+
+        # Load or use provided JSON schema
+        schema = (
+            standard_format
+            if isinstance(standard_format, dict)
+            else load_schema(standard_format)
+        )
+
+        pages = training_data
+        gold = label_data
+
+        # Build record->page mapping
+        page_indices = []
+        for idx, rec_txt in enumerate(gold):
+            if self._looks_like_json(rec_txt):
+                rec = json.loads(rec_txt)
+                key_vals = [str(v) for v in rec.values()]
+            else:
+                key_vals = [rec_txt.split("\n", 1)[0].strip()]
+
+            matched = False
+            for pi, text in enumerate(pages):
+                if any(kv in text for kv in key_vals if kv):
+                    page_indices.append(pi)
+                    matched = True
+                    break
+
+            if not matched:
+                if update_callback:
+                    update_callback(
+                        f"[WARN] No page match for record {idx}, defaulting to page 0"
+                    )
+                page_indices.append(0)
+
+        # Tokenize pages and labels
+        enc_pages = self.t5_tokenizer(
+            pages,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=512,
+        )
+        enc_gold = self.t5_tokenizer(
+            gold,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=256,
+        )
+
+        # Supervised DataLoader
+        sup_idx = torch.tensor(page_indices, dtype=torch.long)
+        sup_inputs = enc_pages.input_ids.index_select(0, sup_idx).to(self.device)
+        sup_masks = enc_pages.attention_mask.index_select(0, sup_idx).to(
+            self.device
+        )
+        sup_targets = enc_gold.input_ids.to(self.device)
+        sup_loader = DataLoader(
+            TensorDataset(sup_inputs, sup_masks, sup_targets),
+            batch_size=batch_size,
+            shuffle=True,
+        )
+
+        # Adversarial DataLoader
+        unsup_loader = DataLoader(
+            TensorDataset(torch.arange(len(gold))),
+            batch_size=batch_size,
+            shuffle=True,
+        )
+
         if update_callback:
             update_callback(
-                f"[DEBUG] Starting fine_tune for model '{model_name}' with epochs={epochs}, batch_size={batch_size}, lr={lr}")
-        optimizer = Adam(self.t5_model.parameters(), lr=lr)
-        ce_loss = CrossEntropyLoss(ignore_index=self.t5_tokenizer.pad_token_id)
-        bce_loss = BCEWithLogitsLoss()
+                f"[DEBUG] sup_batches={len(sup_loader)}, unsup_batches={len(unsup_loader)}"
+            )
 
-        dataset_size = len(training_data)
-        if update_callback:
-            update_callback(f"[DEBUG] Dataset size: {dataset_size}")
-        self.t5_model.train()
-        self.discriminator.train()
+        # Optimizers and loss
+        gen_opt = AdamW(self.t5_model.parameters(), lr=lr)
+        disc_opt = AdamW(self.discriminator.parameters(), lr=lr * 0.5)
+        adv_loss_fn = BCEWithLogitsLoss()
+
+        lambda_adv = 0.1
+        gen_steps_per_disc = 2
+        gen_kwargs = {"max_length": 64, "num_beams": 1}
 
         loss_history = []
-        last_gen_loss = None
-        last_disc_loss = None
+        last_gen_loss = last_disc_loss = 0.0
 
-        for epoch in range(epochs):
-            if update_callback:
-                update_callback(f"[DEBUG] Epoch {epoch + 1}/{epochs} started.")
-            epoch_losses = []
-
-            for i in range(0, dataset_size, batch_size):
-                batch_num = i // batch_size + 1
-                start_idx = i
-                end_idx = min(i + batch_size, dataset_size)
-                if update_callback:
-                    update_callback(f"[DEBUG] Processing batch {batch_num}: samples {start_idx+1} to {end_idx+1}")
-
-                # Prepare prompts and labels
-                batch_inputs, batch_labels = [], []
-                for j in range(start_idx, end_idx):
-                    entity_info = f"Entities: {entity_data[j]}" if entity_data else ""
-                    prompt = (
-                        f"""
-                        You are a data standardization expert. Your task is to standardize the following text:
-                        {training_data[j]}
-                        standardize the text according to the following format:
-                        {standard_format}
-                        and make sure that the following named entities and any other relevant factual information are included:
-                        {entity_info}
-                        """
-                    )
-                    batch_inputs.append(prompt)
-                    batch_labels.append(label_data[j])
-
-                # Tokenization
-                if update_callback:
-                    update_callback(f"[DEBUG] Tokenizing batch {batch_num}")
-                input_encodings = self.t5_tokenizer(batch_inputs, return_tensors="pt",
-                                                    padding=True, truncation=True, max_length=512)
-                label_encodings = self.t5_tokenizer(batch_labels, return_tensors="pt",
-                                                    padding=True, truncation=True, max_length=512)
-
-                input_ids = input_encodings.input_ids.to(self.device)
-                attention_mask = input_encodings.attention_mask.to(self.device)
-                labels = label_encodings.input_ids.to(self.device)
-
-                # Generator forward pass
-                outputs = self.t5_model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                gen_loss = outputs.loss
-                last_gen_loss = gen_loss.item()
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} gen_loss: {last_gen_loss:.4f}")
-
-                # Generation step
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} starting generate() call")
-                with torch.no_grad():
-                    generated_ids = self.t5_model.generate(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        max_length=128,
-                        num_beams=2,
-                        early_stopping=True,
-                        no_repeat_ngram_size=2
-                    )
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} generate() completed")
-
-                generated_texts = [self.t5_tokenizer.decode(g, skip_special_tokens=True) for g in generated_ids]
-                sample_text = generated_texts[0] if generated_texts else 'N/A'
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} sample generated text: {sample_text}")
-
-                # Discriminator input
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} preparing discriminator inputs")
-                disc_inputs = self.discriminator_tokenizer(
-                    training_data[start_idx:end_idx],
-                    generated_texts,
-                    return_tensors="pt",
-                    padding=True, truncation=True, max_length=512
+        # Training loop
+        for epoch in range(1, epochs + 1):
+            # Supervised phase
+            sup_acc = 0.0
+            for in_ids, in_mask, tgt_ids in sup_loader:
+                in_ids, in_mask, tgt_ids = (
+                    in_ids.to(self.device),
+                    in_mask.to(self.device),
+                    tgt_ids.to(self.device),
                 )
-                disc_inputs = {k: v.to(self.device) for k, v in disc_inputs.items()}
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} discriminator tokenization completed")
+                gen_opt.zero_grad()
+                loss_sup = self.t5_model(
+                    input_ids=in_ids,
+                    attention_mask=in_mask,
+                    labels=tgt_ids,
+                ).loss
+                loss_sup.backward()
+                clip_grad_norm_(self.t5_model.parameters(), 1.0)
+                gen_opt.step()
+                sup_acc += loss_sup.item()
 
-                disc_outputs = self.discriminator(**disc_inputs)
-                target = torch.ones(disc_outputs.logits.shape, device=self.device)
-                disc_loss = bce_loss(disc_outputs.logits, target)
-                last_disc_loss = disc_loss.item()
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} disc_loss: {last_disc_loss:.4f}")
-
-                # Total loss and backward
-                total_loss = gen_loss + 0.5 * disc_loss
-                if update_callback:
-                    update_callback(f"[DEBUG] Batch {batch_num} total_loss: {total_loss.item():.4f}")
-
-                optimizer.zero_grad()
-                total_loss.backward()
-                optimizer.step()
-
-                epoch_losses.append(total_loss.item())
-                if update_callback:
-                    update_callback(f"Batch {batch_num}: gen_loss={last_gen_loss:.4f}, disc_loss={last_disc_loss:.4f}")
-
-            # Epoch summary
-            avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
-            loss_history.append({"epoch": epoch + 1, "average_loss": avg_loss, "batch_losses": epoch_losses})
+            avg_sup = sup_acc / len(sup_loader)
             if update_callback:
-                update_callback(f"[DEBUG] Epoch {epoch + 1} completed. Average loss: {avg_loss:.4f}")
+                update_callback(
+                    f"[DEBUG] Epoch {epoch} SUP avg_loss={avg_sup:.6f}"
+                )
+
+            # Adversarial phase
+            adv_acc = disc_acc = 0.0
+            for (idx_tensor,) in unsup_loader:
+                idx = idx_tensor.item()
+                pi = page_indices[idx]
+                page_text = pages[pi]
+
+                # Generate once for discriminator
+                gen_ids = self.t5_model.generate(
+                    input_ids=enc_pages.input_ids[pi : pi + 1].to(self.device),
+                    attention_mask=
+                        enc_pages.attention_mask[pi : pi + 1].to(self.device),
+                    **gen_kwargs,
+                )
+                fake_txt = self.t5_tokenizer.decode(
+                    gen_ids[0], skip_special_tokens=True
+                )
+
+                # Schema enforcement
+                try:
+                    parsed = json.loads(fake_txt)
+                    jsonschema.validate(parsed, schema)
+                except Exception:
+                    pass
+
+                real_txt = gold[idx]
+
+                # Tokenize for discriminator (using entailment)
+                real_in = self.discriminator_tokenizer(
+                    page_text,
+                    real_txt,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=128,
+                ).to(self.device)
+                fake_in = self.discriminator_tokenizer(
+                    page_text,
+                    fake_txt,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=128,
+                ).to(self.device)
+
+                # Discriminator update
+                disc_opt.zero_grad()
+                logits_r = self.discriminator(**real_in).logits[:, 2]
+                logits_f = self.discriminator(**fake_in).logits[:, 2]
+                loss_d = (
+                    adv_loss_fn(logits_r, torch.ones_like(logits_r)) +
+                    adv_loss_fn(logits_f, torch.zeros_like(logits_f))
+                ) * 0.5
+                loss_d.backward()
+                clip_grad_norm_(self.discriminator.parameters(), 1.0)
+                disc_opt.step()
+
+                disc_acc += loss_d.item()
+                last_disc_loss = loss_d.item()
+
+                # Generator adversarial updates
+                for _ in range(gen_steps_per_disc):
+                    gen_opt.zero_grad()
+                    # Regenerate after update
+                    gen_ids2 = self.t5_model.generate(
+                        input_ids=enc_pages.input_ids[pi : pi + 1].to(self.device),
+                        attention_mask=
+                            enc_pages.attention_mask[pi : pi + 1].to(self.device),
+                        **gen_kwargs,
+                    )
+                    fake_txt2 = self.t5_tokenizer.decode(
+                        gen_ids2[0], skip_special_tokens=True
+                    )
+                    fake_in2 = self.discriminator_tokenizer(
+                        page_text,
+                        fake_txt2,
+                        return_tensors="pt",
+                        padding=True,
+                        truncation=True,
+                        max_length=128,
+                    ).to(self.device)
+                    logits_f2 = self.discriminator(**fake_in2).logits[:, 2]
+                    loss_g = adv_loss_fn(logits_f2, torch.ones_like(logits_f2))
+                    scaled_loss_g = lambda_adv * loss_g
+                    scaled_loss_g.backward()
+                    clip_grad_norm_(self.t5_model.parameters(), 1.0)
+                    gen_opt.step()
+
+                    adv_acc += scaled_loss_g.item()
+                    last_gen_loss = scaled_loss_g.item()
+
+            avg_adv = adv_acc / len(unsup_loader)
+            avg_disc = disc_acc / len(unsup_loader)
+            loss_history.append({
+                "epoch": epoch,
+                "sup": avg_sup,
+                "adv": avg_adv,
+                "disc": avg_disc,
+            })
+
+            if update_callback:
+                update_callback(
+                    f"[DEBUG] Epoch {epoch} ADV avg={avg_adv:.6f}, DISC avg={avg_disc:.6f}"
+                )
 
         # Save models
-        generator_weights_path = f"models/{model_name}_finetuned_generator.pt"
-        discriminator_weights_path = f"models/{model_name}_finetuned_discriminator.pt"
-        self.t5_model.save_pretrained(generator_weights_path)
-        self.discriminator.save_pretrained(discriminator_weights_path)
+        gen_path = f"models/{model_name}_finetuned_generator"
+        disc_path = f"models/{model_name}_finetuned_discriminator"
+        self.t5_model.save_pretrained(gen_path)
+        self.discriminator.save_pretrained(disc_path)
 
-        if update_callback:
-            update_callback(
-                f"[DEBUG] Fine-tuning completed. Final gen_loss: {last_gen_loss:.4f}, disc_loss: {last_disc_loss:.4f}")
-            update_callback("Fine-tuning completed.")
         return {
-            "final_loss": total_loss.item(),
+            "final_loss": last_gen_loss + last_disc_loss,
             "generator_loss": last_gen_loss,
             "discriminator_loss": last_disc_loss,
             "epochs": epochs,
             "loss_history": loss_history,
-            "hyperparameters": {"learning_rate": lr, "batch_size": batch_size, "epochs": epochs},
-            "training_status": "trained",
-            "generator_weights_path": generator_weights_path,
-            "discriminator_weights_path": discriminator_weights_path,
+            "hyperparameters": {
+                "learning_rate": lr,
+                "batch_size": batch_size,
+                "epochs": epochs,
+            },
+            "generator_weights_path": gen_path,
+            "discriminator_weights_path": disc_path,
             "training_data": training_data,
-            "named_entities": entity_data or [],
-            "standard_format": standard_format
+            "named_entities": entity_data,
+            "standard_format": standard_format,
         }
 
     def extract_entities(self, text, update_callback):
@@ -281,41 +410,105 @@ class PDFStandardizer:
 
         return all_entities
 
-    def generate_standardized_report(self, text, update_callback=None):
-        entities = self.extract_entities(text, update_callback=None)
-        entity_info = f"Entities: {json.dumps(entities)}" if entities else ""
+    def generate_standardized_report(
+            self,
+            report_df: pd.DataFrame,
+            model_name: str,
+            update_callback=None
+    ) -> str:
+        """
+        For a single PDF (as a DataFrame with columns 'filename', 'Page', 'Text', optionally 'Corrected_Text'),
+        generates a standardized record per page, validates each with the discriminator,
+        writes an .xlsx into processed/<model_name>/ and returns that file path.
+        """
+        filename = report_df["filename"].iloc[0]
+        processed = []
 
-        prompt = (
-            f"""
-            You are a data standardization expert. Your task is to standardize the following text:
-            {text}
-            standardize the text according to the following format:
-            {self.standard_format}
-            and make sure that the following named entities and any other relevant factual information are included:
-            {entity_info}
-            """
+        for _, row in report_df.iterrows():
+            text = row.get("Corrected_Text", row["Text"])
+            page_no = row["Page"]
+
+            # --- 1) Generate JSON dict for this page ---
+            prompt_entities = json.dumps(self.extract_entities(text, update_callback), ensure_ascii=False)
+            prompt = (
+                "You are a data-standardisation assistant.\n"
+                "Return **only** a valid JSON object matching this schema:\n"
+                f"{self.standard_format}\n\n"
+                f"TEXT:\n{text}\n\n"
+                f"Entities: {prompt_entities}"
+            )
+            enc = self.t5_tokenizer(
+                prompt,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512
+            )
+            enc = {k: v.to(self.device) for k, v in enc.items()}
+            gen_ids = self.t5_model.generate(**enc, max_length=256, num_beams=2, early_stopping=True)
+            gen_str = self.t5_tokenizer.decode(gen_ids[0], skip_special_tokens=True)
+
+            try:
+                std_dict = json.loads(gen_str)
+            except json.JSONDecodeError:
+                std_dict = {}
+            if update_callback:
+                update_callback(f"Page {page_no} generated JSON: {std_dict}")
+
+            # --- 2) Validate factual consistency ---
+            conf = self.validate_report(text, std_dict)
+            if update_callback:
+                update_callback(f"Page {page_no} confidence: {conf:.3f}")
+
+            # --- 3) Assemble record ---
+            record = {
+                "filename": filename,
+                "page_number": page_no,
+                **std_dict,
+                "confidence": conf,
+            }
+            processed.append(record)
+
+        # --- 4) Dump to Excel ---
+        out_dir = os.path.join("processed", model_name)
+        os.makedirs(out_dir, exist_ok=True)
+        xlsx_path = os.path.join(out_dir, f"{filename}_Standardized.xlsx")
+
+        # Load your schema (either dict or filepath)
+        schema = (
+            self.standard_format
+            if isinstance(self.standard_format, dict)
+            else load_schema(self.standard_format)
+        )
+        json_to_xlsx(
+            {next(iter(schema["sheets"])): processed},
+            schema,
+            xlsx_path
         )
 
-        input_encodings = self.t5_tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        input_ids = input_encodings.input_ids.to(self.device)
-        attention_mask = input_encodings.attention_mask.to(self.device)
+        if update_callback:
+            update_callback(f"Wrote Excel → {xlsx_path}")
+        return xlsx_path
 
-        generated_ids = self.t5_model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            max_length=128,
-            num_beams=2,
-            early_stopping=True,
-            no_repeat_ngram_size=2
+    def validate_report(self, original_text: str, generated: object) -> float:
+        """
+        Converts `generated` to JSON text if needed, then returns
+        the entailment probability from BART-MNLI’s 'entailment' class.
+        """
+        gen_str = json.dumps(generated, ensure_ascii=False) if isinstance(generated, dict) else str(generated)
+        inputs = self.discriminator_tokenizer(
+            original_text,
+            gen_str,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=128
         )
-
-        return self.t5_tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-
-    def validate_report(self, original_text, generated_text):
-        from torch.nn.functional import softmax
-        inputs = self.discriminator_tokenizer(original_text, generated_text, return_tensors="pt", padding=True, truncation=True)
-        outputs = self.discriminator(**inputs)
-        return softmax(outputs.logits, dim=-1)[:, 2]
+        inputs = {k: v.to(self.device) for k,v in inputs.items()}
+        logits = self.discriminator(**inputs).logits
+        probs = softmax(logits, dim=-1)
+        # label index 2 == 'entailment'
+        return probs[0, 2].item()
 
     def load_model(self, model_name, update_callback=None):
         record = ModelSystem.query.filter_by(name=model_name).first()
@@ -324,7 +517,15 @@ class PDFStandardizer:
         if record.status == ModelStatus.UNTRAINED.value:
             return ModelLoadStatus.UNTRAINED
 
-        self.standard_format = record.standard_format
+        try:
+            path = record.standard_format or ""
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    self.standard_format = json.load(f)
+            else:
+                self.standard_format = {}
+        except Exception:
+            self.standard_format = {}
 
         generator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="generator").first()
         discriminator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="discriminator").first()
@@ -371,8 +572,15 @@ class PDFStandardizer:
 
         label_data = []
         for df_index, df in enumerate(pdf_dfs_label):
-            for text in df["Text"]:
-                label_data.append(text)
+            if "Text" in df.columns:
+                for text in df["Text"]:
+                    label_data.append(text)
+            else:
+                records = df.fillna("").to_dict(orient="records")
+                if update_callback:
+                    update_callback(f"Label data is not in Text column, using records: {records}")
+                for rec in records:
+                    label_data.append(json.dumps(rec))
 
         fine_tune_result = self.fine_tune(
             model_name=model_name,
@@ -395,13 +603,17 @@ class PDFStandardizer:
         # Save the training configuration and history as JSON strings.
         record.train_config = json.dumps(fine_tune_result["hyperparameters"])
         record.train_history = json.dumps(fine_tune_result["loss_history"])
-        record.standard_format = fine_tune_result["standard_format"]
+        schema = fine_tune_result["standard_format"]
+        fmt_path = os.path.join("formats", f"{model_name}_schema.json")
+        with open(fmt_path, "w", encoding="utf-8") as f:
+            json.dump(schema, f, ensure_ascii=False, indent=2)
+        record.standard_format = fmt_path
 
         # Update or create the generator LLM record.
         generator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="generator").first()
         if not generator_llm:
             generator_llm = LLMModel(model_system_id=record.id, llm_type="generator")
-        generator_llm.architecture = "t5-small"
+        generator_llm.architecture = "google/flan-t5-large"
         generator_llm.weights_path = fine_tune_result["generator_weights_path"]
         generator_llm.hyperparameters = json.dumps(fine_tune_result["hyperparameters"])
         generator_llm.train_status = TrainStatus.TRAINED.value
@@ -411,7 +623,7 @@ class PDFStandardizer:
         discriminator_llm = LLMModel.query.filter_by(model_system_id=record.id, llm_type="discriminator").first()
         if not discriminator_llm:
             discriminator_llm = LLMModel(model_system_id=record.id, llm_type="discriminator")
-        discriminator_llm.architecture = "roberta-base"
+        discriminator_llm.architecture = "facebook/bart-large-mnli"
         discriminator_llm.weights_path = fine_tune_result["discriminator_weights_path"]
         discriminator_llm.hyperparameters = json.dumps(fine_tune_result["hyperparameters"])
         discriminator_llm.train_status = TrainStatus.TRAINED.value
@@ -486,59 +698,28 @@ class PDFStandardizer:
             update_callback(f"Training completed. Model {model_name} is now TRAINED.")
         return ModelLoadStatus.SUCCESS
 
-    def process_pdfs(self, pdf_dfs, model_name, update_callback=None, num_tries=3):
-        status = self.load_model(model_name)
+    def process_pdfs(
+        self,
+        pdf_dfs: list[pd.DataFrame],
+        model_name: str,
+        update_callback=None
+    ):
+        """
+        Loops through each DataFrame in `pdf_dfs`, calls
+        generate_standardized_report → Excel for each,
+        and returns (status, [list of Excel file paths]).
+        """
+        status = self.load_model(model_name, update_callback)
         if status != ModelLoadStatus.SUCCESS:
             if update_callback:
                 update_callback("Model must be trained first.")
             return status, None
-        if update_callback:
-            update_callback(f"Processing started for files using {model_name}...")
 
-        reports = []
-        for df_index, df in enumerate(pdf_dfs):
-            standardized_report = []
+        outputs = []
+        for df in pdf_dfs:
             if update_callback:
-                update_callback(f"Processing file {df_index+1} of {len(pdf_dfs)}...")
+                update_callback(f"Starting report for {df['filename'].iloc[0]}")
+            excel_path = self.generate_standardized_report(df, model_name, update_callback)
+            outputs.append(excel_path)
 
-            for text_index, text in enumerate(df["Text"]):
-                cur_try = 0
-                standardized_text = ""
-                validated_score = 0
-
-                while validated_score < 0.5:
-                    if update_callback:
-                        update_callback(f"Processing page {text_index+1}, attempt {cur_try+1}")
-                    standardized_text = self.generate_standardized_report(text, update_callback)
-                    validated_score = self.validate_report(text, standardized_text).item()
-                    if update_callback:
-                        update_callback(f"Page {text_index+1} processed with confidence {validated_score}")
-                    if cur_try == num_tries-1:
-                        if update_callback:
-                            update_callback("Maximum number of generation attempts reach, continuing...")
-                        break
-                    cur_try += 1
-
-                standardized_report.append({
-                    "filename": df["filename"].iloc[0],
-                    "page_number": df["Page"].iloc[text_index],
-                    "original_text": text,
-                    "standardized_text": standardized_text,
-                    "confidence": validated_score
-                })
-            new_report_df = pd.DataFrame(standardized_report)
-            reports.append(new_report_df)
-            if update_callback:
-                update_callback(f"Finished Processing file {df_index+1} of {len(pdf_dfs)}")
-
-        output_dir = f"processed/{model_name}"
-        if not os.path.isdir(output_dir):
-            os.makedirs(output_dir)
-
-        for report in reports:
-            filename = report["filename"].iloc[0]
-            report.to_csv(f'{output_dir}/{filename}_Standardized.csv', index=False)
-
-        if update_callback:
-            update_callback("Processing completed. Saving data...")
-        return ModelLoadStatus.SUCCESS, reports
+        return ModelLoadStatus.SUCCESS, outputs

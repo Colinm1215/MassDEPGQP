@@ -226,16 +226,7 @@
                     <!-- File Upload -->
                     <div class="mb-3">
                         <label for="standardFormatFile" class="form-label">Upload Standard Format File</label>
-                        <input type="file" id="standardFormatFile" class="form-control" accept=".txt">
-                    </div>
-
-                    <p class="text-center">OR</p>
-
-                    <!-- Manual Input -->
-                    <div class="mb-3">
-                        <label for="standardFormatInput" class="form-label">Enter Standard Format</label>
-                        <textarea id="standardFormatInput" class="form-control" rows="4"
-                                  placeholder="Enter standard format manually..."></textarea>
+                        <input type="file" id="standardFormatFile" class="form-control" accept=".xlsx">
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -278,6 +269,16 @@
                                     </li>
                                 `;
                                 $('#fileList1 ul').append(listItem);
+                                $('#fileList2 ul').append(listItem);
+                            }
+                            if (file.endsWith('.xlsx') || file.endsWith('.json')) {
+                                const listItem = `
+                                    <li class="file-item d-flex align-items-center" data-file="${file}">
+                                        <label><input type="checkbox" class="file-checkbox me-2"></label>
+                                        <span class="file-name">${file}</span>
+                                        <span class="file-date text-muted">${new Date().toLocaleDateString()}</span>
+                                    </li>
+                                `;
                                 $('#fileList2 ul').append(listItem);
                             }
                         });
@@ -400,48 +401,40 @@
 
         // Handle submission from modal
         $('#submitStandardFormat').click(function () {
-            const fileInput = document.getElementById("standardFormatFile");
-            const textInput = document.getElementById("standardFormatInput").value.trim();
+            const fileObj = $('#standardFormatFile')[0].files[0];
+            if (!fileObj) { alert("Pick a .xlsx first"); return; }
 
-            if (fileInput.files.length > 0) {
-                // Read file contents
-                const file = fileInput.files[0];
-                const reader = new FileReader();
-                reader.onload = function (event) {
-                    standardFormatData = event.target.result; // Store file content
-                    submitTrainingRequest();
-                };
-                reader.readAsText(file);
-            } else if (textInput) {
-                standardFormatData = textInput;
-                submitTrainingRequest();
-            } else {
-                alert("Please upload a file or enter a standard format.");
-            }
+            standardFormatData = fileObj;
+            submitTrainingRequest();
         });
 
         // Function to send the AJAX request after getting the format
         function submitTrainingRequest() {
             $('#standardFormatModal').fadeOut(); // Close modal
 
+            const fileLists = getSelectFiles();
+            if (!fileLists) return alert("No files selected");
+
             const modelSelect = document.getElementById('modelSelect');
             const selectedValue = modelSelect.value;
-            const checkbox = document.getElementById("bypass_already_train_checkbox");
-            const isChecked = checkbox.checked;
-            const fileLists = getSelectFiles();
-            if (!fileLists) return;
+            const isChecked    = document.getElementById("bypass_already_train_checkbox").checked;
+            const formatInput  = document.getElementById('standardFormatFile');
+            const formatFile   = formatInput.files[0];
+            if (!formatFile) return alert("Pick a .xlsx first");
+
+            const fd = new FormData();
+            fd.append('model_name', selectedValue);
+            fd.append('bypass_already_trained', isChecked);
+            fd.append('standard_format', formatFile);
+            fd.append('primary_files',   JSON.stringify(fileLists.primaryFiles));
+            fd.append('secondary_files', JSON.stringify(fileLists.secondaryFiles));
 
             $.ajax({
                 url: '/train_model',
                 type: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({
-                    primary_files: fileLists.primaryFiles,
-                    secondary_files: fileLists.secondaryFiles,
-                    model_name: selectedValue,
-                    bypass_already_trained: isChecked,
-                    standard_format: standardFormatData  // Include format data
-                }),
+                data: fd,
+                processData: false,
+                contentType: false,
                 success: function (response) {
                     alert(response.message);
                 },

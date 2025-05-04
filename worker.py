@@ -25,7 +25,7 @@ def _send_update(message: str):
     current_task.update_state(state='PROGRESS', meta={'status': message})
 
 @celery.task(bind=True)
-def celery_train_model(self, training_files, label_files, model_name, bypass_already_trained):
+def celery_train_model(self, training_files, label_files, model_name, bypass_already_trained, standard_format):
     def callback_fn(msg):
         if not hasattr(self, 'error_reported') or not self.error_reported:
             _send_update(msg)
@@ -42,11 +42,24 @@ def celery_train_model(self, training_files, label_files, model_name, bypass_alr
                     pdf_dfs_data_training.append(df)
             pdf_dfs_data_label = []
             for fname in label_files:
-                csv_path = os.path.join('uploads', fname)
-                if os.path.exists(csv_path):
-                    df = pd.read_csv(csv_path)
-                    pdf_dfs_data_label.append(df)
-            error = modelClass.train(pdf_dfs_data_training, pdf_dfs_data_label, model_name, update_callback=callback_fn, bypass_already_trained=bypass_already_trained)
+                path = os.path.join('uploads', fname)
+                if not os.path.exists(path):
+                    continue
+                if fname.endswith('.csv'):
+                    df = pd.read_csv(path)
+                if fname.endswith('.xlsx'):
+                    df = pd.read_excel(path)
+
+                df['filename'] = os.path.splitext(fname)[0]
+                pdf_dfs_data_label.append(df)
+
+
+            error = modelClass.train(pdf_dfs_data_training,
+                                     pdf_dfs_data_label,
+                                     model_name,
+                                     update_callback=callback_fn,
+                                     bypass_already_trained=bypass_already_trained,
+                                     standard_format=standard_format)
             if error == ModelLoadStatus.SUCCESS:
                 _send_update("Training completed.")
                 return {'status': 'SUCCESS', 'message': f"Training completed for {model_name}"}
