@@ -1,0 +1,23 @@
+table Table
+	lineageTag: 41a7c2df-dfe4-4dbe-b316-19fffc3973f3
+
+	column PageInput
+		dataType: int64
+		formatString: 0
+		lineageTag: 7f03855d-68ef-4a02-a9dc-6eb299f6f6ec
+		summarizeBy: none
+		sourceColumn: PageInput
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Table = m
+		mode: import
+		source =
+				let
+				    Source = Table.FromRows(Json.Document(Binary.Decompress(Binary.FromText("LdGxcQUhDEDBXi52YAlJ2LXc/P7bsIcleUTaAfS+Tzyfr/fJ03Vap306p/v05/T3NL4dpsN4mA9AEAIRjIAEJSl570BJSlKSkpSkJCUpi7Io6z6FsiiLsiiLsiiLUpSiFKXuj1CKUpSiFKUoTWlKU5rS92MpTWlKU5oylKEMZShDmbsfylCGMpRN2ZRN2ZRN2ZR91/yvfP4A", BinaryEncoding.Base64), Compression.Deflate)), let _t = ((type nullable text) meta [Serialized.Text = true]) in type table [PageInput = _t]),
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"PageInput", Int64.Type}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_ResultType = Table
+
