@@ -1,6 +1,8 @@
 from celery import Celery
 import redis
 
+# Initializes Redis client and configures Celery application for asynchronous task processing.
+
 redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 celery = Celery(
@@ -11,14 +13,11 @@ celery = Celery(
 
 celery.conf.update(
     result_expires=3600,
-    task_serializer='pickle',
-    accept_content=['pickle', 'json'],
-    result_serializer='pickle',
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
     timezone='UTC',
     enable_utc=True,
-)
-
-celery.conf.update(
     broker_heartbeat=0,
     broker_transport_options={
         'visibility_timeout': 3600,

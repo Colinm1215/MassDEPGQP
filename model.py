@@ -26,7 +26,15 @@ class ModelLoadStatus(Enum):
     ERROR = 4
 
 def create_model_record(model_name):
-    # Create a new model record in the DB if it doesn't already exist.
+    """
+    Create a new model record in the database if it doesn't already exist.
+
+    Args:
+        model_name: Unique model name
+
+    Returns:
+        ModelSystem: SQLAlchemy model instance
+    """
     existing = ModelSystem.query.filter_by(name=model_name).first()
     if existing:
         return existing
@@ -36,7 +44,26 @@ def create_model_record(model_name):
     return new_model
 
 class PDFStandardizer:
+    """
+    Orchestrates PDF preprocessing, LLM fine-tuning, entity extraction,
+    standardization, validation, and storage.
+
+    Components:
+        - T5 generator for standardization
+        - RoBERTa discriminator for validation
+        - spaCy NLP pipeline with custom EntityRuler
+        - SQLAlchemy for metadata persistence
+
+    All models are stored locally under `models/` and all training progress
+    is tracked in the database.
+    """
+
     def __init__(self):
+        """
+        Initialize NLP pipeline, load pre-trained LLMs, define EntityRuler patterns,
+        and set up device (CPU/GPU). If `models/` folder doesn't exist, create it.
+        """
+
         if not os.path.exists("models"):
             os.makedirs("models")
         self.nlp = spacy.load("en_core_web_trf")
@@ -113,10 +140,24 @@ class PDFStandardizer:
     def fine_tune(self, model_name, training_data, label_data, standard_format, entity_data=None,
                   epochs=3, batch_size=4, lr=5e-5, update_callback=None):
         """
-        Fine tune the model using training_data and label_data.
-        entity_data is concatenated to the input for context.
-        The standard_format is used as a prompt template.
+        Fine-tune a FLAN-T5 model on a custom standardization task.
+        Adds discriminator feedback to ensure factual accuracy and format coherence.
+
+        Args:
+            model_name: Target model ID.
+            training_data: Raw extracted PDF text.
+            label_data: Expected standardized outputs.
+            standard_format: Template format for structured output.
+            entity_data: Named entities per training sample.
+            epochs: Training loop count.
+            batch_size: Samples per gradient step.
+            lr: Learning rate.
+            update_callback: Real-time logger.
+
+        Returns:
+            dict: Training summary including loss, config, paths, and entity metadata.
         """
+
         if update_callback:
             update_callback(
                 f"[DEBUG] Starting fine_tune for model '{model_name}' with epochs={epochs}, batch_size={batch_size}, lr={lr}")
@@ -267,6 +308,16 @@ class PDFStandardizer:
         }
 
     def extract_entities(self, text, update_callback):
+        """
+        Extract entities from raw text using the spaCy pipeline with custom rules.
+
+        Args:
+            text: Unstructured input text
+            update_callback: Real-time logger.
+
+        Returns:
+            List[dict]: Extracted entity_type and entity_value pairs
+        """
         doc = self.nlp(text)
         all_entities = []
 
@@ -282,7 +333,17 @@ class PDFStandardizer:
         return all_entities
 
     def generate_standardized_report(self, text, update_callback=None):
-        entities = self.extract_entities(text, update_callback=None)
+        """
+         Generate a standardized version of a text input using T5.
+
+         Args:
+             text: Raw input text
+             update_callback: Real-time logger
+
+         Returns:
+             str: Standardized output
+         """
+        entities = self.extract_entities(text, update_callback=update_callback)
         entity_info = f"Entities: {json.dumps(entities)}" if entities else ""
 
         prompt = (
@@ -312,12 +373,32 @@ class PDFStandardizer:
         return self.t5_tokenizer.decode(generated_ids[0], skip_special_tokens=True)
 
     def validate_report(self, original_text, generated_text):
+        """
+        Use discriminator to assess semantic consistency between original and generated text.
+
+        Args:
+            original_text: Original unstructured text
+            generated_text: Generated standardized text
+
+        Returns:
+            torch.Tensor: Probability of semantic entailment (confidence score)
+        """
         from torch.nn.functional import softmax
         inputs = self.discriminator_tokenizer(original_text, generated_text, return_tensors="pt", padding=True, truncation=True)
         outputs = self.discriminator(**inputs)
         return softmax(outputs.logits, dim=-1)[:, 2]
 
     def load_model(self, model_name, update_callback=None):
+        """
+        Load model weights from disk and restore standard_format.
+
+        Args:
+            model_name: Unique model name
+            update_callback: Real-time logger
+
+        Returns:
+            ModelLoadStatus: Enum indicating outcome
+        """
         record = ModelSystem.query.filter_by(name=model_name).first()
         if not record:
             return ModelLoadStatus.NOT_FOUND
@@ -353,6 +434,20 @@ class PDFStandardizer:
         return ModelLoadStatus.SUCCESS
 
     def train(self, pdf_dfs_training, pdf_dfs_label, model_name, update_callback=None, bypass_already_trained=False, standard_format=""):
+        """
+        Train both generator and discriminator using cleaned PDF dataframes.
+
+        Args:
+            pdf_dfs_training: Raw text by page
+            pdf_dfs_label: Clean labels by page
+            model_name: Name of the model
+            update_callback: Optional logger
+            bypass_already_trained: Force retrain
+            standard_format: Template used for generation
+
+        Returns:
+            ModelLoadStatus: Enum indicating outcome
+        """
         status = self.load_model(model_name)
         if status == ModelLoadStatus.SUCCESS and not bypass_already_trained:
             if update_callback:
@@ -487,6 +582,18 @@ class PDFStandardizer:
         return ModelLoadStatus.SUCCESS
 
     def process_pdfs(self, pdf_dfs, model_name, update_callback=None, num_tries=3):
+        """
+        Use a trained model to process raw PDF dataframe into standardized outputs.
+
+        Args:
+            pdf_dfs: List of files (one DataFrame per file).
+            model_name: Which trained model to use.
+            update_callback: Optional log function.
+            num_tries: Max retry attempts if low confidence.
+
+        Returns:
+            Tuple[ModelLoadStatus, List[pd.DataFrame]]: Status and output DataFrames
+        """
         status = self.load_model(model_name)
         if status != ModelLoadStatus.SUCCESS:
             if update_callback:

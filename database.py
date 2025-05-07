@@ -19,8 +19,19 @@ class TrainStatus(Enum):
     FAILED = "failed"
 
 
-# 1. Models Table
 class ModelSystem(db.Model):
+    """
+    Represents a top-level ML model and its lifecycle state.
+
+    Fields:
+        - id (UUID string): Unique ID.
+        - name (str): Unique model name.
+        - status (str): One of 'untrained', 'training', 'trained', 'failed'.
+        - created_at / updated_at (datetime): Timestamps.
+        - train_config (str): Serialized JSON of training hyperparameters.
+        - train_history (str): Serialized JSON of loss/metrics per epoch.
+        - standard_format (str): Template text used for standardization.
+    """
     __tablename__ = 'models'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -40,8 +51,19 @@ class ModelSystem(db.Model):
     training_data = db.relationship("TrainingData", back_populates="model_system", cascade="all, delete-orphan")
 
 
-# 2. LLM Table
 class LLMModel(db.Model):
+    """
+    Represents a trained LLM component (generator or discriminator).
+
+    Fields:
+        - id (UUID string)
+        - model_system_id (FK): Links to parent ModelSystem.
+        - llm_type (str): 'generator' or 'discriminator'.
+        - architecture (str): e.g., 't5-small', 'roberta-base'.
+        - weights_path (str): Filepath to .pt weight file on disk.
+        - hyperparameters (str): Serialized JSON hyperparams.
+        - train_status (str): One of 'untrained', 'training', etc.
+    """
     __tablename__ = 'llm_models'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -55,8 +77,16 @@ class LLMModel(db.Model):
     model_system = db.relationship("ModelSystem", back_populates="llms")
 
 
-# 3. Named Entities Table
 class NamedEntity(db.Model):
+    """
+    Represents a named entity linked to a specific model.
+
+    Fields:
+        - id (UUID string)
+        - model_system_id (FK): Parent model.
+        - entity_type (str): e.g., 'ADDRESS', 'DATE', etc.
+        - entity_value (str): The extracted value from text.
+    """
     __tablename__ = 'named_entities'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -67,8 +97,17 @@ class NamedEntity(db.Model):
     model_system = db.relationship("ModelSystem", back_populates="named_entities")
 
 
-# 4. Training Data Table
 class TrainingData(db.Model):
+    """
+    Represents a training or label data file used for model training.
+
+    Fields:
+        - id (UUID string)
+        - model_system_id (FK): Parent model.
+        - file_name (str): Original filename.
+        - file_path (str): Location of the uploaded/processed file.
+        - processed_at (datetime): Time the file was processed.
+    """
     __tablename__ = 'training_data'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -80,6 +119,15 @@ class TrainingData(db.Model):
     model_system = db.relationship("ModelSystem", back_populates="training_data")
 
 def print_all_db_records():
+    """
+    Utility function for printing a human-readable summary of all DB records.
+
+    Iterates over:
+        - ModelSystem entries and their metadata.
+        - Associated LLMModels, NamedEntities, and TrainingData.
+
+    Used for debugging and verifying database state.
+    """
     print("=== Models ===")
     models = ModelSystem.query.all()
     for m in models:
