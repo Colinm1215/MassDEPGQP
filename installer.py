@@ -1,4 +1,5 @@
 import subprocess, os, sys, time, venv
+import webbrowser
 from pathlib import Path
 
 if getattr(sys, 'frozen', False):
@@ -58,5 +59,7 @@ if __name__ == "__main__":
     start_redis()
     time.sleep(3)
     start_celery()
-    time.sleep(2)
+    time.sleep(3)
     start_flask()
+    time.sleep(4)
+    webbrowser.open("http://localhost:5000")

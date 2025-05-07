@@ -79,63 +79,116 @@ class PDFStandardizer:
         ruler = self.nlp.add_pipe("entity_ruler", before="ner")
 
         patterns = [
-            {"label": "SOIL_TYPE",
-             "pattern": [
-                 {"LOWER": "soil"}, {"LOWER": "type"}, {"IS_PUNCT": True, "OP": "?"},
-                 {"LOWER": {"IN": ["sandy", "clay", "loam", "silt", "gravel"]}, "OP": "+"}
-             ]},
-            {"label": "ORDER_NUMBER",
-             "pattern": [
-                 {"LOWER": "order"}, {"IS_PUNCT": True, "OP": "?"},
-                 {"LOWER": "#", "OP": "?"}, {"TEXT": {"REGEX": r"[A-Za-z0-9\-]+"}, "OP": "+"}
-             ]},
-            {"label": "TEST_RESULT",
-             "pattern": [
-                 {"LOWER": "test"}, {"TEXT": ":", "OP": "?"},
-                 {"TEXT": {"REGEX": r".+"}},
-             ]},
+            {"label": "ORDER_NUMBER", "pattern": [
+                {"LOWER": "order"}, {"IS_PUNCT": True, "OP": "*"},
+                {"TEXT": {"REGEX": r"[#:]?"}, "OP": "?"},
+                {"TEXT": {"REGEX": r"[A-Za-z0-9\-]+"}}
+            ]},
 
-            {"label": "DATE",
-             "pattern": [{"TEXT": {"REGEX": r"\b(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])/\d{4}\b"}}]},
+            {"label": "DATE", "pattern": [
+                {"TEXT": {"REGEX": r"\b(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])/\d{4}\b"}}
+            ]},
 
-            {"label": "SOURCE_LOCATION",
-             "pattern": [
-                 {"LOWER": "source"}, {"LOWER": "location"}, {"TEXT": ":", "OP": "?"},
-                 {"TEXT": {"REGEX": r".+"}},
-             ]},
+            {"label": "SOURCE_LOCATION", "pattern": [
+                {"LOWER": "source"}, {"LOWER": "location"},
+                {"TEXT": ":", "OP": "?"},
+                {"IS_ALPHA": True, "OP": "+"}
+            ]},
 
-            {"label": "DESTINATION",
-             "pattern": [
-                 {"LOWER": "destination"}, {"TEXT": ":", "OP": "?"},
-                 {"TEXT": {"REGEX": r".+"}},
-             ]},
+            {"label": "DESTINATION", "pattern": [
+                {"LOWER": "destination"},
+                {"TEXT": ":", "OP": "?"},
+                {"IS_ALPHA": True, "OP": "+"}
+            ]},
 
-            {"label": "ADDRESS",
-             "pattern": [
-                 {"LIKE_NUM": True}, {"IS_ALPHA": True, "OP": "+"},
-                 {"LOWER": {"IN": ["ave", "street", "road", "blvd", "drive", "lane"]}, "OP": "?"}
-             ]},
+            {"label": "ADDRESS", "pattern": [
+                {"LIKE_NUM": True},
+                {"IS_ALPHA": True, "OP": "+"},
+                {"LOWER": {"IN": ["ave", "avenue", "st", "street", "road", "rd", "blvd", "drive", "dr", "lane", "ln"]},
+                 "OP": "?"}
+            ]},
 
-            {"label": "VOLUME",
-             "pattern": [
-                 {"LIKE_NUM": True}, {"LOWER": {"IN": ["cubic", "cu"]}}, {"LOWER": {"IN": ["yard", "yards"]}}
-             ]},
+            {"label": "SOIL_TYPE", "pattern": [
+                {"LOWER": "soil"}, {"LOWER": "type"},
+                {"IS_PUNCT": True, "OP": "?"},
+                {"LOWER": {"IN": ["sandy", "clay", "loam", "silt", "gravel"]}, "OP": "+"}
+            ]},
 
-            {"label": "SAFETY_STATUS",
-             "pattern": [
-                 {"LOWER": "safety"}, {"LOWER": "status"}, {"TEXT": ":", "OP": "?"},
-                 {"TEXT": {"REGEX": r".+"}}
-             ]},
+            {"label": "VOLUME_CUYD", "pattern": [
+                {"LIKE_NUM": True},
+                {"LOWER": {"IN": ["cubic", "cu", "cuyds", "yds"]}},
+                {"LOWER": {"IN": ["yard", "yards", "yd"]}, "OP": "?"}
+            ]},
 
-            {"label": "SPECIAL_HANDLING",
-             "pattern": [
-                 {"LOWER": "special"}, {"LOWER": "handling"}, {"TEXT": ":", "OP": "?"},
-                 {"TEXT": {"REGEX": r".+"}}
-             ]},
+            {"label": "WEIGHT_TON", "pattern": [
+                {"LIKE_NUM": True},
+                {"LOWER": {"IN": ["ton", "tons", "tonnage", "net", "gross", "tare"]}}
+            ]},
 
-            {"label": "PHONE_NUMBER",
-             "pattern": [{"TEXT": {"REGEX": r"\(\d{3}\)\s*\d{3}-\d{4}"}}]},
+            {"label": "LOAD_COUNT", "pattern": [
+                {"LIKE_NUM": True},
+                {"LOWER": {"IN": ["load", "loads"]}}
+            ]},
+
+            {"label": "SAFETY_STATUS", "pattern": [
+                {"LOWER": "safety"}, {"LOWER": "status"},
+                {"TEXT": ":", "OP": "?"},
+                {"IS_ALPHA": True, "OP": "+"}
+            ]},
+
+            {"label": "SPECIAL_HANDLING", "pattern": [
+                {"LOWER": "special"}, {"LOWER": "handling"},
+                {"TEXT": ":", "OP": "?"},
+                {"IS_ALPHA": True, "OP": "+"}
+            ]},
+
+            {"label": "TEST_RESULT", "pattern": [
+                {"LOWER": "test"},
+                {"TEXT": ":", "OP": "?"},
+                {"IS_ALPHA": True, "OP": "+"}
+            ]},
+
+            {"label": "PHONE_NUMBER", "pattern": [
+                {"TEXT": {"REGEX": r"\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4}"}}
+            ]},
+
+            {"label": "EXCEEDANCE", "pattern": [
+                {"LOWER": {"IN": ["exceed", "exceeds", "exceedance", "exceedances"]}}
+            ]},
+
+            {"label": "ABOVE_LIMIT", "pattern": [
+                {"LOWER": "above"},
+                {"LOWER": {"IN": ["criteria", "limit", "threshold", "rcs-1", "rcs-2"]}, "OP": "?"}
+            ]},
+
+            {"label": "RCS_LEVEL", "pattern": [
+                {"TEXT": {"REGEX": r"RCS[- ]?[12]"}}
+            ]},
+
+            {"label": "ACCEPTANCE_CRITERIA", "pattern": [
+                {"LOWER": "acceptance"}, {"LOWER": "criteria"}
+            ]},
+
+            {"label": "REJECTION", "pattern": [
+                {"LOWER": {"IN": ["rejected", "rejection", "quarantined", "quarantine"]}}
+            ]},
+
+            {"label": "THIRD_PARTY_INSPECTION", "pattern": [
+                {"LOWER": {"IN": ["third", "3rd"]}},
+                {"LOWER": {"IN": ["party", "inspector", "inspection", "tpi"]}}
+            ]},
+
+            {"label": "INSPECTION_DATE", "pattern": [
+                {"LOWER": {"IN": ["inspection", "inspected"]}},
+                {"LOWER": {"IN": ["on", "at"]}, "OP": "?"},
+                {"TEXT": {"REGEX": r"\b(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])/\d{4}\b"}}
+            ]},
+
+            {"label": "NEGATION", "pattern": [
+                {"LOWER": {"IN": ["no", "not", "none", "without"]}}
+            ]}
         ]
+
         ruler.add_patterns(patterns)
 
     def fine_tune(self, model_name, training_data, label_data, standard_format, entity_data=None,
@@ -330,19 +383,81 @@ class PDFStandardizer:
         Returns:
             List[dict]: Extracted entity_type and entity_value pairs
         """
-        doc = self.nlp(text)
-        all_entities = []
+        import re
 
-        for ent in doc.ents:
-            all_entities.append({
-                "entity_type": ent.label_,
-                "entity_value": ent.text
+        doc = self.nlp(text)
+        raw_ents = list(doc.ents)
+        results = []
+        skip_indices = set()
+
+        for i, ent in enumerate(raw_ents):
+            if i in skip_indices:
+                continue
+
+            label = ent.label_
+            value = ent.text.strip()
+
+            # --- 1. Negation: "no exceedances" → "NO_EXCEEDANCE"
+            if label == "EXCEEDANCE":
+                for j in range(max(0, ent.start - 3), ent.start):
+                    if doc[j].ent_type_ == "NEGATION":
+                        label = "NO_EXCEEDANCE"
+                        break
+
+            # --- 2. Normalize volume (cu yd or tons)
+            elif label in {"VOLUME_CUYD", "WEIGHT_TON"}:
+                label = "SOIL_VOLUME"
+                value = f"{value} ({ent.label_})"
+
+            # --- 3. Merge adjacent GPEs like "Springfield, MA"
+            elif label == "GPE":
+                if i + 1 < len(raw_ents):
+                    next_ent = raw_ents[i + 1]
+                    if next_ent.label_ == "GPE" and ent.end == next_ent.start:
+                        value = f"{value}, {next_ent.text.strip()}"
+                        label = "SOURCE_LOCATION_GPE"
+                        skip_indices.add(i + 1)
+
+            # --- 4. Trim prefixes for order numbers and destinations
+            elif label == "ORDER_NUMBER":
+                value = re.sub(r"^Order\s*[:#-]*\s*", "", value, flags=re.IGNORECASE)
+
+            elif label == "DESTINATION":
+                value = re.sub(r"^Destination\s*[:]*\s*", "", value, flags=re.IGNORECASE)
+
+            elif label == "SOURCE_LOCATION":
+                value = re.sub(r"^Source\s+Location\s*[:]*\s*", "", value, flags=re.IGNORECASE)
+
+            # --- 5. Split out concatenated entities (e.g., "30 cubic yards Safety Status")
+            if label == "ADDRESS" and "safety status" in value.lower():
+                parts = re.split(r"\s+(?=Safety Status)", value, maxsplit=1)
+                if len(parts) == 2:
+                    results.append({"entity_type": "ADDRESS", "entity_value": parts[0].strip()})
+                    results.append({"entity_type": "SAFETY_STATUS", "entity_value": parts[1].strip()})
+                    continue
+
+            # --- 6. Fix overmatch in SPECIAL_HANDLING
+            if label == "SPECIAL_HANDLING" and "Requested Delivery Date" in value:
+                parts = re.split(r"Requested Delivery Date", value, maxsplit=1)
+                results.append({"entity_type": label, "entity_value": parts[0].strip()})
+                continue
+
+            # --- 7. Fix truncated or misclassified phone numbers
+            if label in {"CARDINAL", "OTHER"}:
+                match = re.search(r"\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4}", value)
+                if match:
+                    label = "PHONE_NUMBER"
+                    value = match.group(0)
+
+            results.append({
+                "entity_type": label,
+                "entity_value": value
             })
 
         if update_callback:
-            update_callback(f"Extracted {len(all_entities)} entities: {all_entities}")
+            update_callback(f"Extracted {len(results)} entities: {results}")
 
-        return all_entities
+        return results
 
     def generate_standardized_report(self, text, update_callback=None):
         """
