@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 from datetime import datetime
@@ -169,7 +170,7 @@ class PDFStandardizer:
         if update_callback:
             update_callback(f"[DEBUG] Dataset size: {dataset_size}")
         self.t5_model.train()
-        self.discriminator.train()
+        self.discriminator.eval()
 
         loss_history = []
         last_gen_loss = None
@@ -208,9 +209,9 @@ class PDFStandardizer:
                 if update_callback:
                     update_callback(f"[DEBUG] Tokenizing batch {batch_num}")
                 input_encodings = self.t5_tokenizer(batch_inputs, return_tensors="pt",
-                                                    padding=True, truncation=True, max_length=512)
+                                                    padding=True, truncation=True, max_length=256)
                 label_encodings = self.t5_tokenizer(batch_labels, return_tensors="pt",
-                                                    padding=True, truncation=True, max_length=512)
+                                                    padding=True, truncation=True, max_length=256)
 
                 input_ids = input_encodings.input_ids.to(self.device)
                 attention_mask = input_encodings.attention_mask.to(self.device)
@@ -230,7 +231,7 @@ class PDFStandardizer:
                     generated_ids = self.t5_model.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        max_length=128,
+                        max_length=64,
                         num_beams=2,
                         early_stopping=True,
                         no_repeat_ngram_size=2
@@ -256,9 +257,11 @@ class PDFStandardizer:
                 if update_callback:
                     update_callback(f"[DEBUG] Batch {batch_num} discriminator tokenization completed")
 
-                disc_outputs = self.discriminator(**disc_inputs)
-                target = torch.ones(disc_outputs.logits.shape, device=self.device)
-                disc_loss = bce_loss(disc_outputs.logits, target)
+                with torch.no_grad():
+                    disc_outputs = self.discriminator(**disc_inputs)
+                    target = torch.ones(disc_outputs.logits.shape, device=self.device)
+                    disc_loss = bce_loss(disc_outputs.logits, target)
+
                 last_disc_loss = disc_loss.item()
                 if update_callback:
                     update_callback(f"[DEBUG] Batch {batch_num} disc_loss: {last_disc_loss:.4f}")
@@ -276,11 +279,20 @@ class PDFStandardizer:
                 if update_callback:
                     update_callback(f"Batch {batch_num}: gen_loss={last_gen_loss:.4f}, disc_loss={last_disc_loss:.4f}")
 
+                torch.cuda.empty_cache()
+                gen_loss = outputs.loss.detach()
+                disc_loss = disc_loss.detach()
+                del outputs, generated_ids, input_ids, attention_mask, labels
+                del disc_inputs, disc_outputs
+
             # Epoch summary
             avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
             loss_history.append({"epoch": epoch + 1, "average_loss": avg_loss, "batch_losses": epoch_losses})
             if update_callback:
                 update_callback(f"[DEBUG] Epoch {epoch + 1} completed. Average loss: {avg_loss:.4f}")
+
+            gc.collect()
+            torch.cuda.empty_cache()
 
         # Save models
         generator_weights_path = f"models/{model_name}_finetuned_generator.pt"
@@ -412,6 +424,9 @@ class PDFStandardizer:
 
         try:
             if generator_llm and generator_llm.weights_path and os.path.exists(generator_llm.weights_path):
+                del self.t5_model
+                gc.collect()
+                torch.cuda.empty_cache()
                 self.t5_model = AutoModelForSeq2SeqLM.from_pretrained(generator_llm.weights_path)
                 self.t5_model.to(self.device)
             else:
@@ -420,6 +435,9 @@ class PDFStandardizer:
                 return ModelLoadStatus.ERROR
 
             if discriminator_llm and discriminator_llm.weights_path and os.path.exists(discriminator_llm.weights_path):
+                del self.discriminator
+                gc.collect()
+                torch.cuda.empty_cache()
                 self.discriminator = AutoModelForSequenceClassification.from_pretrained(discriminator_llm.weights_path)
                 self.discriminator.to(self.device)
             else:

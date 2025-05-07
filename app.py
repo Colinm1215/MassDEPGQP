@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, Response, stream_with_context
+from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_from_directory
 from flask_uploads import UploadSet, configure_uploads, UploadNotAllowed
 from werkzeug.utils import secure_filename
 from pdfScript import get_clean_dataframe
@@ -420,6 +420,32 @@ def process_files():
         return valid
     task = celery_process_files.delay(file_names, model_name)
     return jsonify({"message": "File processing started.", "task_id": task.id}), 200
+
+@app.route('/download', methods=['GET'])
+def download_file():
+    """
+    Endpoint to download a file from either the processed directory.
+
+    Expects:
+        - file: Path to the file (relative to the uploads or processed folders)
+
+    Returns:
+        - File response if found
+        - 400 if parameter is missing
+        - 404 if file doesn't exist
+    """
+    file_path = request.args.get('file')
+    if not file_path:
+        return jsonify({"error": "No file specified"}), 400
+
+
+    folder = app.config['PROCESSED_FOLDER'] if os.path.dirname(file_path) else app.config['UPLOAD_FOLDER']
+    full_path = os.path.join(folder, file_path)
+
+    if not os.path.exists(full_path):
+        return jsonify({"error": "File not found"}), 404
+
+    return send_from_directory(directory=folder, path=file_path, as_attachment=True)
 
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)
