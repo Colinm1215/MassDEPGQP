@@ -17,12 +17,7 @@ def ensure_venv():
     if not venv_python.exists():
         print(f"[ERROR] No valid Python executable found in: {venv_python}")
         print("Please run: python -m venv venv")
-        notExit = True
-        while notExit:
-            print("Enter anything to exit!")
-            user_input = input()
-            if user_input:
-                notExit = False
+        input("Press Enter to exit...")
         sys.exit(1)
     print(f"[OK] Virtual environment detected at: {venv_python}")
     return venv_python
