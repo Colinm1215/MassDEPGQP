@@ -9,3 +9,4 @@ Installer.exe can also be run to install and launch the program, but will not cr
 Python is required to run this program
 
 GPU resources can reach as high as 15 gb of VRAM
+Program crashes are often due to a lack of memory
