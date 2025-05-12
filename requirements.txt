@@ -13,7 +13,7 @@ openpyxl
 scikit-learn
 scipy
 Pillow
-transformers==4.39.3
+transformers==4.51.3
 sentencepiece
 spacy
 spacy-transformers
