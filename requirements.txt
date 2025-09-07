@@ -1,5 +1,5 @@
 torch==2.2.2
-numpy<2.0
+numpy<3.0
 Flask
 Flask-Reuploaded
 flask_cors
